@@ -1,0 +1,28 @@
+# Modern Python environment dependencies for localization_server.py.
+#
+# Recommended environment:
+#   conda create -n visloc python=3.10 -y
+#   conda activate visloc
+#   pip install -r requirements_localization_server.txt
+#
+# For CUDA-specific PyTorch wheels, install torch/torchvision first from the
+# matching PyTorch index, then run this file.
+#
+# HLoc note:
+#   Do not rely on pip's git install if SuperGluePretrainedNetwork is missing.
+#   Install HLoc from a recursive clone instead:
+#     git clone --recursive https://github.com/cvg/Hierarchical-Localization.git
+#     pip install -e Hierarchical-Localization
+#   If the clone lives outside this directory, set:
+#     export HLOC_THIRD_PARTY=/path/to/Hierarchical-Localization/third_party
+
+numpy
+h5py
+scipy
+opencv-python
+Pillow
+tqdm
+pyyaml
+torch
+torchvision
+pycolmap

@@ -46,7 +46,7 @@ UI behavior highlights:
 
 ![UI overview](screenshots/ui-overview.png)
 ![Map view](screenshots/map.png)
-![Control panel](screenshots/panel.png)
+![Control panel](screenshots/controls.png)
 
 ## API Summary
 - `GET /` : UI page

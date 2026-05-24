@@ -119,7 +119,7 @@ def launch_carla_sim(exe_path: str, args: List[str]) -> subprocess.Popen:
 @app.post('/api/start')
 async def start_processes(payload: Dict[str, Any]) -> JSONResponse:
     start_visual = bool(payload.get('start_visual', True))
-    start_localization_server = bool(payload.get('start_localization_server', False))
+    start_localization_server = bool(payload.get('start_localization_server', True))
 
     if start_visual and (state.visual_localization is None or state.visual_localization.poll() is not None):
         args = [
@@ -142,12 +142,12 @@ async def start_processes(payload: Dict[str, Any]) -> JSONResponse:
 
     if start_localization_server and (state.localization_server is None or state.localization_server.poll() is not None):
         args = [
-            '--host', str(payload.get('localization_host', '0.0.0.0')),
+            '--host', str(payload.get('localization_host', '127.0.0.1')),
             '--port', str(payload.get('localization_port', 5555)),
             '--bundle-root', str(payload.get('bundle_root', 'sim-19-may-bundle')),
         ]
         state.localization_server = subprocess.Popen(
-            build_python_command('visual_localization_server.py', args),
+            build_python_command('localization_server.py', args),
             cwd=str(ROOT_DIR),
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0,
         )

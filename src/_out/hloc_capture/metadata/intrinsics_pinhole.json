@@ -1,0 +1,22 @@
+{
+  "format": "colmap_hloc_pinhole",
+  "note": "CARLA pinhole cameras using one shared camera model/intrinsics",
+  "formula": "focal = width / (2 * tan(FOV * pi / 360)); fx=fy=focal; cx=width/2; cy=height/2",
+  "shared_camera": true,
+  "cameras": [
+    {
+      "camera_id": 1,
+      "camera_name": "shared_camera",
+      "model": "PINHOLE",
+      "width": 1920,
+      "height": 1080,
+      "params": [
+        879.6779270567265,
+        879.6779270567265,
+        960.0,
+        540.0
+      ],
+      "fov_deg": 95.0
+    }
+  ]
+}

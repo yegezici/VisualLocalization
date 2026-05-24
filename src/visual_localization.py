@@ -14,9 +14,13 @@ import socket
 import struct
 import sys
 import threading
-from typing import Dict, List, Tuple
+import time
+import urllib.request
+
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+
 
 try:
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -94,14 +98,24 @@ def parse_args() -> argparse.Namespace:
                         help=f'Latitude used to choose the nearest vehicle spawn point (default: {DEFAULT_SPAWN_LAT})')
     parser.add_argument('--spawn-lon', type=float, default=DEFAULT_SPAWN_LON,
                         help=f'Longitude used to choose the nearest vehicle spawn point (default: {DEFAULT_SPAWN_LON})')
-    parser.add_argument('--random-spawn', action='store_true',
-                        help='Use a random vehicle spawn point instead of the nearest point to --spawn-lat/--spawn-lon')
     parser.add_argument('--loc-host', default='127.0.0.1',
                         help='Visual localization server host (default: 127.0.0.1)')
     parser.add_argument('--loc-port', type=int, default=5555,
                         help='Visual localization server port (default: 5555)')
     parser.add_argument('--loc-timeout', type=float, default=120.0,
                         help='Visual localization TCP timeout in seconds (default: 120)')
+    parser.add_argument('--no-preview-window', action='store_true',
+                        help='Disable the Pygame camera preview window')
+    parser.add_argument('--web-enabled', action='store_true',
+                        help='Send live telemetry to the web UI')
+    parser.add_argument('--web-host', default='127.0.0.1',
+                        help='Web UI host for telemetry (default: 127.0.0.1)')
+    parser.add_argument('--web-port', type=int, default=8000,
+                        help='Web UI port for telemetry (default: 8000)')
+    parser.add_argument('--web-timeout', type=float, default=0.25,
+                        help='Telemetry HTTP timeout in seconds (default: 0.25)')
+    parser.add_argument('--web-rate', type=float, default=6.0,
+                        help='Ground-truth telemetry rate in Hz (default: 6)')
     return parser.parse_args()
 
 
@@ -161,18 +175,7 @@ def choose_spawn_point(
     spawn_points: List[carla.Transform],
     target_lat: float,
     target_lon: float,
-    random_spawn: bool,
 ) -> carla.Transform:
-    if random_spawn:
-        spawn_point = random.choice(spawn_points)
-        geo = world_map.transform_to_geolocation(spawn_point.location)
-        print(
-            f'[INFO] Random spawn point: x={spawn_point.location.x:.2f} '
-            f'y={spawn_point.location.y:.2f} yaw={spawn_point.rotation.yaw:.2f} '
-            f'lat={geo.latitude:.8f} lon={geo.longitude:.8f}'
-        )
-        return spawn_point
-
     best_spawn = None
     best_geo = None
     best_distance = float('inf')
@@ -306,6 +309,11 @@ def location_error_m(estimated: carla.Location, ground_truth: carla.Location) ->
     return math.sqrt(dx * dx + dy * dy + dz * dz)
 
 
+def carla_xy_to_lonlat(carla_map: carla.Map, x: float, y: float, z: float = 0.0) -> Tuple[float, float]:
+    geo = carla_map.transform_to_geolocation(carla.Location(x=float(x), y=float(y), z=float(z)))
+    return float(geo.longitude), float(geo.latitude)
+
+
 def recvall(sock: socket.socket, size: int) -> bytes:
     chunks = []
     remaining = size
@@ -325,7 +333,7 @@ def request_visual_localization(
     host: str,
     port: int,
     timeout: float,
-) -> None:
+) -> Optional[Dict[str, object]]:
     try:
         rgb = np.ascontiguousarray(rgb_array, dtype=np.uint8)
         height, width, channels = rgb.shape
@@ -378,8 +386,24 @@ def request_visual_localization(
             f'dy={location.y - gt_location.y:.3f} '
             f'dz={location.z - gt_location.z:.3f}'
         )
+        return {
+            'success': True,
+            'est_x': float(location.x),
+            'est_y': float(location.y),
+            'est_z': float(location.z),
+            'est_lat': float(geo.latitude),
+            'est_lon': float(geo.longitude),
+            'gt_x': float(gt_location.x),
+            'gt_y': float(gt_location.y),
+            'gt_z': float(gt_location.z),
+            'gt_lat': float(gt_geo.latitude),
+            'gt_lon': float(gt_geo.longitude),
+            'heading_deg': float(estimated_heading),
+            'num_inliers': int(response.get('num_inliers', 0)),
+        }
     except Exception as exc:
         print(f'[Localization Error] {exc}')
+        return None
 
 
 def get_image_sensor_transform(image: carla.Image, sensor: carla.Sensor) -> carla.Transform:
@@ -403,6 +427,24 @@ def apply_vehicle_control(vehicle: carla.Vehicle) -> None:
     if keys[K_a]:
         control.steer = -0.5
     elif keys[K_d]:
+        control.steer = 0.5
+
+    vehicle.apply_control(control)
+
+
+def apply_vehicle_control_from_keys(vehicle: carla.Vehicle, pressed_keys: set) -> None:
+    control = carla.VehicleControl()
+
+    if 'w' in pressed_keys:
+        control.reverse = False
+        control.throttle = 0.6
+    elif 's' in pressed_keys:
+        control.reverse = True
+        control.throttle = 0.45
+
+    if 'a' in pressed_keys:
+        control.steer = -0.5
+    elif 'd' in pressed_keys:
         control.steer = 0.5
 
     vehicle.apply_control(control)
@@ -495,6 +537,16 @@ def save_json(path: str, payload: object) -> None:
         json.dump(payload, f, indent=2)
 
 
+def post_web_telemetry(url: str, payload: Dict[str, object], timeout: float) -> None:
+    try:
+        data = json.dumps(payload).encode('utf-8')
+        req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
+        with urllib.request.urlopen(req, timeout=timeout):
+            return
+    except Exception:
+        return
+
+
 def make_simple_colmap_pose_record(
     world: carla.World,
     capture_id: int,
@@ -555,7 +607,7 @@ def main() -> None:
     write_intrinsics_json(out['intrinsics_json'], width, height, effective_fov)
 
     client = carla.Client(args.host, args.port)
-    client.set_timeout(10.0)
+    client.set_timeout(15.0)
     world = client.get_world()
 
     actors: List[carla.Actor] = []
@@ -579,7 +631,6 @@ def main() -> None:
             spawn_points,
             args.spawn_lat,
             args.spawn_lon,
-            args.random_spawn,
         )
         vehicle = world.spawn_actor(vehicle_bp, spawn_point)
         actors.append(vehicle)
@@ -597,18 +648,32 @@ def main() -> None:
             sensors[name] = sensor
             actors.append(sensor)
             sensor.listen(lambda data, camera_name=name: latest_images.__setitem__(camera_name, data))
+        world_map = world.get_map()
+        use_pygame = not args.no_preview_window
 
-        pygame.init()
-        pygame.font.init()
-        if args.preview_layout == 'single':
-            display = pygame.display.set_mode((preview_width, preview_height), pygame.HWSURFACE | pygame.DOUBLEBUF)
-        elif len(active_camera_names) == 2:
-            display = pygame.display.set_mode((preview_width * 2, preview_height), pygame.HWSURFACE | pygame.DOUBLEBUF)
+        pending_localizations = []
+        web_url = None
+        web_gt_interval = None
+        last_gt_sent = 0.0
+        if args.web_enabled:
+            web_url = f'http://{args.web_host}:{args.web_port}/api/telemetry'
+            web_gt_interval = 1.0 / max(args.web_rate, 0.1)
+
+        if use_pygame:
+            pygame.init()
+            pygame.font.init()
+            if args.preview_layout == 'single':
+                display = pygame.display.set_mode((preview_width, preview_height), pygame.HWSURFACE | pygame.DOUBLEBUF)
+            elif len(active_camera_names) == 2:
+                display = pygame.display.set_mode((preview_width * 2, preview_height), pygame.HWSURFACE | pygame.DOUBLEBUF)
+            else:
+                display = pygame.display.set_mode((preview_width * 2, preview_height * 2), pygame.HWSURFACE | pygame.DOUBLEBUF)
+            pygame.display.set_caption('CARLA Async HLoc Capture')
+            font = pygame.font.Font(None, 26)
+            clock = pygame.time.Clock()
         else:
-            display = pygame.display.set_mode((preview_width * 2, preview_height * 2), pygame.HWSURFACE | pygame.DOUBLEBUF)
-        pygame.display.set_caption('CARLA Async HLoc Capture')
-        font = pygame.font.Font(None, 26)
-        clock = pygame.time.Clock()
+            font = None
+            clock = None
 
         running = True
         capture_requested = False
@@ -624,6 +689,12 @@ def main() -> None:
                     return
                 localization_running[0] = True
 
+            if web_url is not None:
+                post_web_telemetry(web_url, {
+                    'type': 'localization_started',
+                    'timestamp': float(time.time()),
+                }, args.web_timeout)
+
             rgb_frame = np.ascontiguousarray(image_to_rgb_array(image).copy())
             carla_map = world.get_map()
             sensor = sensors.get(args.preview_camera)
@@ -636,7 +707,8 @@ def main() -> None:
 
             def worker() -> None:
                 try:
-                    request_visual_localization(
+                    # GÜNCELLEME: Sunucudan dönen tahmini lokasyon alındı
+                    loc = request_visual_localization(
                         rgb_frame,
                         carla_map,
                         gt_transform,
@@ -644,6 +716,8 @@ def main() -> None:
                         args.loc_port,
                         args.loc_timeout,
                     )
+                    if loc is not None:
+                        pending_localizations.append(loc)
                 finally:
                     with localization_lock:
                         localization_running[0] = False
@@ -653,30 +727,37 @@ def main() -> None:
             thread.daemon = True
             thread.start()
 
-        print(f'Controls: W/A/S/D to drive, SPACE to capture latest {len(active_camera_names)} camera image(s), L to localize, Q or ESC to quit.')
+        if use_pygame:
+            print(f'Controls: autopilot enabled. SPACE to capture latest {len(active_camera_names)} camera image(s), L to localize, Q or ESC to quit.')
+        else:
+            print('Pygame preview disabled. Use external triggers for captures/localization.')
 
         while running:
-            clock.tick(30)
+            if clock is not None:
+                clock.tick(30)
             preview_counter += 1
 
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    running = False
-                elif event.type == pygame.KEYDOWN:
-                    if event.key in (K_ESCAPE, K_q):
+            if use_pygame:
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
                         running = False
-                    elif event.key == K_SPACE:
-                        capture_requested = True
-                    elif event.key == K_l:
-                        image = latest_images.get(args.preview_camera)
-                        if image is None:
-                            print('[Localization Skipped] No camera image received yet.')
-                        else:
-                            submit_localization(image)
+                    elif event.type == pygame.KEYDOWN:
+                        if event.key in (K_ESCAPE, K_q):
+                            running = False
+                        elif event.key == K_SPACE:
+                            capture_requested = True
+                        elif event.key == K_l:
+                            image = latest_images.get(args.preview_camera)
+                            if image is None:
+                                print('[Localization Skipped] No camera image received yet.')
+                            else:
+                                submit_localization(image)
 
-            apply_vehicle_control(vehicle)
+                pass
+            else:
+                pass
 
-            if preview_counter % args.preview_every == 0:
+            if use_pygame and preview_counter % args.preview_every == 0:
                 if args.preview_layout == 'single':
                     tile_order = [(args.preview_camera, (0, 0))]
                 elif len(active_camera_names) == 2:
@@ -706,9 +787,52 @@ def main() -> None:
                 preview_image = latest_images.get(args.preview_camera)
                 preview_frame = preview_image.frame if preview_image is not None else 'waiting'
                 hud_text = f'{args.preview_camera if args.preview_layout == "single" else args.preview_layout} | Frame: {preview_frame} | Captures: {capture_id} | SPACE: capture'
-                hud_surface = font.render(hud_text, True, (255, 255, 255))
-                display.blit(hud_surface, (10, 10))
+                if font is not None:
+                    hud_surface = font.render(hud_text, True, (255, 255, 255))
+                    display.blit(hud_surface, (10, 10))
                 pygame.display.flip()
+            
+            curr_tf = vehicle.get_transform()
+            car_lon, car_lat = carla_xy_to_lonlat(
+                world_map,
+                curr_tf.location.x,
+                curr_tf.location.y,
+                curr_tf.location.z,
+            )
+            if web_url is not None and web_gt_interval is not None:
+                now = time.monotonic()
+                if now - last_gt_sent >= web_gt_interval:
+                    post_web_telemetry(web_url, {
+                        'type': 'gt',
+                        'lat': float(car_lat),
+                        'lon': float(car_lon),
+                        'timestamp': float(time.time()),
+                    }, args.web_timeout)
+                    last_gt_sent = now
+
+            # 2. Eğer arka plandaki HLoc sunucusundan yeni bir sonuç geldiyse webe gonder
+            while pending_localizations:
+                loc = pending_localizations.pop(0)
+
+                est_lon, est_lat = carla_xy_to_lonlat(world_map, loc['est_x'], loc['est_y'], 0.0)
+                gt_lon, gt_lat = carla_xy_to_lonlat(world_map, loc['gt_x'], loc['gt_y'], 0.0)
+                if web_url is not None:
+                    post_web_telemetry(web_url, {
+                        'type': 'localization',
+                        'est_lat': float(est_lat),
+                        'est_lon': float(est_lon),
+                        'est_x': float(loc['est_x']),
+                        'est_y': float(loc['est_y']),
+                        'est_z': float(loc['est_z']),
+                        'gt_lat': float(gt_lat),
+                        'gt_lon': float(gt_lon),
+                        'gt_x': float(loc['gt_x']),
+                        'gt_y': float(loc['gt_y']),
+                        'gt_z': float(loc['gt_z']),
+                        'heading_deg': float(loc.get('heading_deg', 0.0)),
+                        'num_inliers': int(loc.get('num_inliers', 0)),
+                        'timestamp': float(time.time()),
+                    }, args.web_timeout)
 
             if not capture_requested:
                 continue

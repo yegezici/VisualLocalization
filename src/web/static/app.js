@@ -38,9 +38,28 @@ const infoError = document.getElementById('info-error');
 const historyList = document.getElementById('history-list');
 const pulseRing = document.getElementById('pulse-ring');
 const toastStack = document.getElementById('toast-stack');
+const startBtnEl = document.getElementById('start-btn');
+const stopBtnEl = document.getElementById('stop-btn');
+const startProgressEl = document.getElementById('start-progress');
+const carlaBtnEl = document.getElementById('carla-btn');
+const carlaStopBtnEl = document.getElementById('carla-stop-btn');
+const carlaModalEl = document.getElementById('carla-modal');
+const carlaStopModalEl = document.getElementById('carla-stop-modal');
+const carlaExeInput = document.getElementById('carla-exe');
+const carlaExePathEl = document.getElementById('carla-exe-path');
+const carlaArgsInput = document.getElementById('carla-args');
+const carlaLaunchConfirm = document.getElementById('carla-launch-confirm');
+const carlaStopConfirm = document.getElementById('carla-stop-confirm');
 
 let lastGt = null;
 let mapInitialized = false;
+let startTimeoutId = null;
+let startLoadingAt = null;
+let startMinTimeoutId = null;
+const MIN_START_VIS_MS = 1000;
+let carlaLoadingAt = null;
+let carlaMinTimeoutId = null;
+const MIN_CARLA_VIS_MS = 1000;
 
 function updateGt(lat, lon) {
   lastGt = [lat, lon];
@@ -122,6 +141,193 @@ function setStatus(text, good) {
   statusEl.style.background = good ? 'rgba(44, 120, 80, 0.25)' : 'rgba(120, 40, 60, 0.25)';
 }
 
+function setStartLoading(active) {
+  if (!startBtnEl) {
+    return;
+  }
+  const label = startBtnEl.querySelector('.btn-label');
+  if (active) {
+    startLoadingAt = Date.now();
+    if (startMinTimeoutId) {
+      clearTimeout(startMinTimeoutId);
+      startMinTimeoutId = null;
+    }
+    if (label) {
+      startBtnEl.dataset.originalLabel = label.textContent || 'Start';
+      label.textContent = 'Starting...';
+    }
+    if (startProgressEl) {
+      startProgressEl.classList.add('is-active');
+    }
+    if (stopBtnEl) {
+      stopBtnEl.disabled = false;
+    }
+  } else if (label) {
+    const original = startBtnEl.dataset.originalLabel || 'Start';
+    label.textContent = original;
+  }
+  startBtnEl.classList.toggle('is-loading', active);
+  startBtnEl.disabled = active;
+  startBtnEl.setAttribute('aria-busy', active ? 'true' : 'false');
+  if (!active) {
+    if (startProgressEl) {
+      startProgressEl.classList.remove('is-active');
+    }
+  }
+}
+
+function endStartLoading() {
+  if (!startBtnEl || !startBtnEl.classList.contains('is-loading')) {
+    setStartLoading(false);
+    return;
+  }
+  const elapsed = Date.now() - (startLoadingAt || 0);
+  if (elapsed >= MIN_START_VIS_MS) {
+    setStartLoading(false);
+    return;
+  }
+  const remaining = MIN_START_VIS_MS - elapsed;
+  if (startMinTimeoutId) {
+    clearTimeout(startMinTimeoutId);
+  }
+  startMinTimeoutId = setTimeout(() => {
+    startMinTimeoutId = null;
+    setStartLoading(false);
+  }, remaining);
+}
+
+function clearStartTimeout() {
+  if (startTimeoutId) {
+    clearTimeout(startTimeoutId);
+    startTimeoutId = null;
+  }
+}
+
+function setCarlaLoading(active) {
+  if (!carlaBtnEl && !carlaStopBtnEl) {
+    return;
+  }
+  const label = carlaBtnEl ? carlaBtnEl.querySelector('.btn-label') : null;
+  const stopLabel = carlaStopBtnEl ? carlaStopBtnEl.querySelector('.btn-label') : null;
+  if (active) {
+    carlaLoadingAt = Date.now();
+    if (carlaMinTimeoutId) {
+      clearTimeout(carlaMinTimeoutId);
+      carlaMinTimeoutId = null;
+    }
+  }
+  if (carlaBtnEl) {
+    carlaBtnEl.classList.toggle('is-loading', active);
+    carlaBtnEl.setAttribute('aria-busy', active ? 'true' : 'false');
+    carlaBtnEl.disabled = active;
+  }
+  if (carlaStopBtnEl) {
+    carlaStopBtnEl.classList.toggle('is-loading', active);
+    carlaStopBtnEl.setAttribute('aria-busy', active ? 'true' : 'false');
+    carlaStopBtnEl.disabled = active;
+  }
+  if (label && !active) {
+    const original = carlaBtnEl.dataset.originalLabel || label.textContent;
+    label.textContent = original;
+  }
+  if (stopLabel && !active) {
+    const original = carlaStopBtnEl.dataset.originalLabel || stopLabel.textContent;
+    stopLabel.textContent = original;
+  }
+}
+
+function endCarlaLoading() {
+  if (!carlaBtnEl || !carlaBtnEl.classList.contains('is-loading')) {
+    setCarlaLoading(false);
+    return;
+  }
+  const elapsed = Date.now() - (carlaLoadingAt || 0);
+  if (elapsed >= MIN_CARLA_VIS_MS) {
+    setCarlaLoading(false);
+    return;
+  }
+  const remaining = MIN_CARLA_VIS_MS - elapsed;
+  if (carlaMinTimeoutId) {
+    clearTimeout(carlaMinTimeoutId);
+  }
+  carlaMinTimeoutId = setTimeout(() => {
+    carlaMinTimeoutId = null;
+    setCarlaLoading(false);
+  }, remaining);
+}
+
+function setCarlaButtonState(isRunning) {
+  if (!carlaBtnEl || !carlaStopBtnEl) {
+    return;
+  }
+  carlaBtnEl.classList.toggle('is-hidden', isRunning);
+  carlaStopBtnEl.classList.toggle('is-hidden', !isRunning);
+}
+
+function openCarlaModal() {
+  if (!carlaModalEl) {
+    return;
+  }
+  carlaModalEl.classList.add('is-open');
+  carlaModalEl.setAttribute('aria-hidden', 'false');
+}
+
+function closeCarlaModal() {
+  if (!carlaModalEl) {
+    return;
+  }
+  carlaModalEl.classList.remove('is-open');
+  carlaModalEl.setAttribute('aria-hidden', 'true');
+}
+
+function openCarlaStopModal() {
+  if (!carlaStopModalEl) {
+    return;
+  }
+  carlaStopModalEl.classList.add('is-open');
+  carlaStopModalEl.setAttribute('aria-hidden', 'false');
+}
+
+function closeCarlaStopModal() {
+  if (!carlaStopModalEl) {
+    return;
+  }
+  carlaStopModalEl.classList.remove('is-open');
+  carlaStopModalEl.setAttribute('aria-hidden', 'true');
+}
+
+function getCarlaExePath() {
+  if (!carlaExeInput) {
+    return '';
+  }
+  if (carlaExeInput.files && carlaExeInput.files[0]) {
+    return carlaExeInput.files[0].path || carlaExeInput.value || '';
+  }
+  return carlaExeInput.value || '';
+}
+
+function updateCarlaExePathLabel() {
+  if (!carlaExePathEl || !carlaExeInput) {
+    return;
+  }
+  const file = carlaExeInput.files && carlaExeInput.files[0];
+  if (file) {
+    const displayPath = file.path || file.name || carlaExeInput.value;
+    carlaExePathEl.textContent = displayPath || 'No file selected';
+    return;
+  }
+  carlaExePathEl.textContent = carlaExeInput.value || 'No file selected';
+}
+
+function scheduleStartTimeout() {
+  clearStartTimeout();
+  startTimeoutId = setTimeout(() => {
+    if (startBtnEl && startBtnEl.classList.contains('is-loading')) {
+      showToast('Start is taking longer than expected...', 'info');
+    }
+  }, 12000);
+}
+
 function showToast(message, tone = 'info') {
   if (!toastStack) {
     return;
@@ -158,15 +364,24 @@ async function refreshStatus() {
   try {
     const res = await fetch('/api/status');
     const data = await res.json();
+    setCarlaButtonState(!!data.carla_sim_running);
     if (data.visual_localization_running) {
       const carlaNote = data.carla_sim_running ? ' + CARLA' : '';
       setStatus(`Running${carlaNote}`, true);
+      endStartLoading();
+      clearStartTimeout();
     } else {
       const carlaNote = data.carla_sim_running ? 'CARLA only' : 'Stopped';
       setStatus(carlaNote, !!data.carla_sim_running);
+      if (!data.carla_sim_running) {
+        endStartLoading();
+        clearStartTimeout();
+      }
     }
   } catch (err) {
     setStatus('Disconnected', false);
+    endStartLoading();
+    clearStartTimeout();
   }
 }
 
@@ -194,6 +409,8 @@ function connectWs() {
       }
       if (payload.type === 'localization_started') {
         showToast('Localization started', 'info');
+        endStartLoading();
+        clearStartTimeout();
       }
     } catch (err) {
       console.warn('Bad payload', err);
@@ -210,9 +427,12 @@ function bindControls() {
   const startBtn = document.getElementById('start-btn');
   const stopBtn = document.getElementById('stop-btn');
   const carlaBtn = document.getElementById('carla-btn');
+  const carlaStopBtn = document.getElementById('carla-stop-btn');
 
 
   startBtn.addEventListener('click', async () => {
+    setStartLoading(true);
+    scheduleStartTimeout();
     const payload = {
       start_visual: true,
       start_localization_server: false,
@@ -225,27 +445,89 @@ function bindControls() {
       web_rate: Number(document.getElementById('web-rate').value || 6),
       no_preview_window: document.getElementById('no-preview').checked
     };
-    await postJson('/api/start', payload);
-    await refreshStatus();
+    try {
+      await postJson('/api/start', payload);
+      await refreshStatus();
+    } catch (err) {
+      endStartLoading();
+      clearStartTimeout();
+      showToast('Start failed. Check backend logs.', 'error');
+    }
   });
 
   stopBtn.addEventListener('click', async () => {
     await postJson('/api/stop', {});
     await refreshStatus();
+    clearStartTimeout();
   });
 
+  if (carlaModalEl) {
+    carlaModalEl.addEventListener('click', (event) => {
+      const target = event.target;
+      if (target && target.dataset && target.dataset.modalClose === 'true') {
+        closeCarlaModal();
+      }
+    });
+  }
+
+  if (carlaStopModalEl) {
+    carlaStopModalEl.addEventListener('click', (event) => {
+      const target = event.target;
+      if (target && target.dataset && target.dataset.modalClose === 'true') {
+        closeCarlaStopModal();
+      }
+    });
+  }
+
+  if (carlaExeInput) {
+    carlaExeInput.addEventListener('change', updateCarlaExePathLabel);
+  }
+
+  if (carlaLaunchConfirm) {
+    carlaLaunchConfirm.addEventListener('click', async () => {
+      const exePath = getCarlaExePath();
+      if (!exePath) {
+        showToast('Please select the CARLA executable.', 'error');
+        return;
+      }
+      closeCarlaModal();
+      setCarlaLoading(true);
+      const payload = {
+        carla_exe: exePath,
+        carla_args: carlaArgsInput ? carlaArgsInput.value : ''
+      };
+      const res = await postJson('/api/launch-carla', payload);
+      if (!res.ok) {
+        setStatus(`CARLA error: ${res.error || 'unknown'}`, false);
+        endCarlaLoading();
+        return;
+      }
+      await refreshStatus();
+      endCarlaLoading();
+      showToast('CARLA running', 'success');
+    });
+  }
+
+  if (carlaStopConfirm) {
+    carlaStopConfirm.addEventListener('click', async () => {
+      closeCarlaStopModal();
+      setCarlaLoading(true);
+      await postJson('/api/stop', {});
+      await refreshStatus();
+      endCarlaLoading();
+      showToast('CARLA stopped', 'info');
+    });
+  }
+
   carlaBtn.addEventListener('click', async () => {
-    const payload = {
-      carla_exe: document.getElementById('carla-exe').value,
-      carla_args: document.getElementById('carla-args').value
-    };
-    const res = await postJson('/api/launch-carla', payload);
-    if (!res.ok) {
-      setStatus(`CARLA error: ${res.error || 'unknown'}`, false);
-      return;
-    }
-    await refreshStatus();
+    openCarlaModal();
   });
+
+  if (carlaStopBtn) {
+    carlaStopBtn.addEventListener('click', async () => {
+      openCarlaStopModal();
+    });
+  }
 }
 
 function init() {

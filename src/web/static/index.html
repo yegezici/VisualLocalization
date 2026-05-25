@@ -25,39 +25,50 @@
       </div>
       <div class="status" id="status">Disconnected</div>
     </header>
+    <div id="start-progress" class="start-progress" aria-hidden="true">
+      <div class="start-progress-bar"></div>
+    </div>
 
     <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
 
     <main class="main">
-      <section class="panel map-panel">
-        <div class="pulse-ring" id="pulse-ring"></div>
-        <div id="map" class="map"></div>
-        <div class="legend">
-          <span class="legend-item"><span class="legend-dot gt"></span> Ground Truth</span>
-          <span class="legend-item"><span class="legend-dot est"></span> Estimated</span>
-        </div>
-        <div class="map-info">
-          <div class="info-title">Latest Localization</div>
-          <div class="info-grid">
-            <div>
-              <div class="info-label">Estimated (lat, lon)</div>
-              <div id="info-est" class="info-value">--</div>
-            </div>
-            <div>
-              <div class="info-label">Ground Truth (lat, lon)</div>
-              <div id="info-gt" class="info-value">--</div>
-            </div>
-            <div>
-              <div class="info-label">Error (meters)</div>
-              <div id="info-error" class="info-value">--</div>
+      <div class="map-column">
+        <section class="panel map-panel">
+          <div class="pulse-ring" id="pulse-ring"></div>
+          <div id="map" class="map"></div>
+          <div class="legend">
+            <span class="legend-item"><span class="legend-dot gt"></span> Ground Truth</span>
+            <span class="legend-item"><span class="legend-dot est"></span> Estimated</span>
+          </div>
+        </section>
+        <section class="panel results-panel">
+          <div class="map-info">
+            <div class="info-title">Latest Localization</div>
+            <div class="info-grid">
+              <div>
+                <div class="info-label">Estimated (lat, lon)</div>
+                <div id="info-est" class="info-value">--</div>
+              </div>
+              <div>
+                <div class="info-label">Ground Truth (lat, lon)</div>
+                <div id="info-gt" class="info-value">--</div>
+              </div>
+              <div>
+                <div class="info-label">Error (meters)</div>
+                <div id="info-error" class="info-value">--</div>
+              </div>
             </div>
           </div>
-        </div>
-        <div class="history-panel">
-          <div class="info-title">Last 5 Localizations</div>
-          <div id="history-list" class="history-list"></div>
-        </div>
-      </section>
+          <div class="history-panel">
+            <div class="info-title">Last 5 Localizations</div>
+            <div class="history-header">
+              <span>Error (m)</span>
+              <span>Est (lat, lon)</span>
+            </div>
+            <div id="history-list" class="history-list"></div>
+          </div>
+        </section>
+      </div>
 
       <section class="panel control-panel">
         <h2>Controls</h2>
@@ -86,26 +97,71 @@
             <input id="no-preview" type="checkbox" />
             <label for="no-preview">Disable Pygame preview</label>
           </div>
-          <div class="divider"></div>
-          <div class="form-row">
-            <label for="carla-exe">CARLA Executable Path</label>
-            <input id="carla-exe" placeholder="C:\CARLA\CarlaUE4.exe" />
-          </div>
-          <div class="form-row">
-            <label for="carla-args">CARLA Extra Args (optional)</label>
-            <input id="carla-args" placeholder="-RenderOffScreen" />
-          </div>
         </div>
         <div class="btn-row">
-          <button id="start-btn" class="btn primary">Start</button>
+          <button id="start-btn" class="btn primary" aria-busy="false">
+            <span class="btn-label">Start</span>
+            <span class="btn-spinner" aria-hidden="true"></span>
+          </button>
           <button id="stop-btn" class="btn">Stop</button>
         </div>
-        <button id="carla-btn" class="btn ghost">Launch CARLA Simulator</button>
+        <div class="carla-row">
+          <button id="carla-btn" class="btn ghost" aria-busy="false">
+            <span class="btn-label">Launch CARLA</span>
+            <span class="btn-spinner" aria-hidden="true"></span>
+          </button>
+          <button id="carla-stop-btn" class="btn ghost is-hidden" aria-busy="false">
+            <span class="btn-label">Stop CARLA</span>
+            <span class="btn-spinner" aria-hidden="true"></span>
+          </button>
+        </div>
         <div class="note">
           Autopilot is enabled. Use L to localize; results appear here.
         </div>
       </section>
     </main>
+  </div>
+
+  <div id="carla-modal" class="modal" aria-hidden="true" role="dialog" aria-labelledby="carla-modal-title">
+    <div class="modal-backdrop" data-modal-close="true"></div>
+    <div class="modal-card" role="document">
+      <div class="modal-header">
+        <h3 id="carla-modal-title">Launch CARLA Simulator</h3>
+        <button class="icon-btn" type="button" data-modal-close="true" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-row">
+          <label for="carla-exe">CARLA Executable</label>
+          <input id="carla-exe" type="file" accept=".exe" />
+          <div id="carla-exe-path" class="file-path">No file selected</div>
+        </div>
+        <div class="form-row">
+          <label for="carla-args">CARLA Extra Args (optional)</label>
+          <input id="carla-args" placeholder="-RenderOffScreen" />
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" type="button" data-modal-close="true">Cancel</button>
+        <button id="carla-launch-confirm" class="btn primary" type="button">Launch</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="carla-stop-modal" class="modal" aria-hidden="true" role="dialog" aria-labelledby="carla-stop-title">
+    <div class="modal-backdrop" data-modal-close="true"></div>
+    <div class="modal-card" role="document">
+      <div class="modal-header">
+        <h3 id="carla-stop-title">Stop CARLA Simulator</h3>
+        <button class="icon-btn" type="button" data-modal-close="true" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        CARLA is currently running. Do you want to stop it?
+      </div>
+      <div class="modal-actions">
+        <button class="btn" type="button" data-modal-close="true">Cancel</button>
+        <button id="carla-stop-confirm" class="btn primary" type="button">Stop CARLA</button>
+      </div>
+    </div>
   </div>
 
   <script

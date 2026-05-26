@@ -46,10 +46,15 @@ const carlaStopBtnEl = document.getElementById('carla-stop-btn');
 const carlaModalEl = document.getElementById('carla-modal');
 const carlaStopModalEl = document.getElementById('carla-stop-modal');
 const carlaExeInput = document.getElementById('carla-exe');
+const carlaExeTextInput = document.getElementById('carla-exe-text');
 const carlaExePathEl = document.getElementById('carla-exe-path');
 const carlaArgsInput = document.getElementById('carla-args');
 const carlaLaunchConfirm = document.getElementById('carla-launch-confirm');
 const carlaStopConfirm = document.getElementById('carla-stop-confirm');
+const runtimeLocalEl = document.getElementById('runtime-local');
+const runtimeEdgeEl = document.getElementById('runtime-edge');
+const runtimeHintEl = document.getElementById('runtime-hint');
+const locHostInput = document.getElementById('loc-host');
 
 let lastGt = null;
 let mapInitialized = false;
@@ -60,6 +65,39 @@ const MIN_START_VIS_MS = 1000;
 let carlaLoadingAt = null;
 let carlaMinTimeoutId = null;
 const MIN_CARLA_VIS_MS = 1000;
+let edgeHostCache = '';
+
+function getRuntimeMode() {
+  if (runtimeEdgeEl && runtimeEdgeEl.checked) {
+    return 'edge';
+  }
+  return 'local';
+}
+
+function setRuntimeUi(mode) {
+  if (!locHostInput) {
+    return;
+  }
+  if (mode === 'edge') {
+    locHostInput.disabled = false;
+    if (edgeHostCache) {
+      locHostInput.value = edgeHostCache;
+    }
+    if (runtimeHintEl) {
+      runtimeHintEl.textContent = 'Runs localization on Jetson Nano. Set host to Jetson IP.';
+    }
+    return;
+  }
+
+  if (locHostInput.value && locHostInput.value !== '127.0.0.1') {
+    edgeHostCache = locHostInput.value;
+  }
+  locHostInput.value = '127.0.0.1';
+  locHostInput.disabled = true;
+  if (runtimeHintEl) {
+    runtimeHintEl.textContent = 'Runs localization server on this machine.';
+  }
+}
 
 function updateGt(lat, lon) {
   lastGt = [lat, lon];
@@ -297,6 +335,9 @@ function closeCarlaStopModal() {
 }
 
 function getCarlaExePath() {
+  if (carlaExeTextInput && carlaExeTextInput.value.trim()) {
+    return carlaExeTextInput.value.trim();
+  }
   if (!carlaExeInput) {
     return '';
   }
@@ -307,16 +348,21 @@ function getCarlaExePath() {
 }
 
 function updateCarlaExePathLabel() {
-  if (!carlaExePathEl || !carlaExeInput) {
+  if (!carlaExePathEl) {
     return;
   }
-  const file = carlaExeInput.files && carlaExeInput.files[0];
+  const textValue = carlaExeTextInput ? carlaExeTextInput.value.trim() : '';
+  if (textValue) {
+    carlaExePathEl.textContent = textValue;
+    return;
+  }
+  const file = carlaExeInput && carlaExeInput.files && carlaExeInput.files[0];
   if (file) {
     const displayPath = file.path || file.name || carlaExeInput.value;
     carlaExePathEl.textContent = displayPath || 'No file selected';
     return;
   }
-  carlaExePathEl.textContent = carlaExeInput.value || 'No file selected';
+  carlaExePathEl.textContent = (carlaExeInput && carlaExeInput.value) || 'No file selected';
 }
 
 function scheduleStartTimeout() {
@@ -433,9 +479,10 @@ function bindControls() {
   startBtn.addEventListener('click', async () => {
     setStartLoading(true);
     scheduleStartTimeout();
+    const runtimeMode = getRuntimeMode();
     const payload = {
       start_visual: true,
-      start_localization_server: false,
+      start_localization_server: runtimeMode === 'local',
       carla_host: document.getElementById('carla-host').value,
       carla_port: Number(document.getElementById('carla-port').value || 2000),
       loc_host: document.getElementById('loc-host').value,
@@ -470,6 +517,22 @@ function bindControls() {
     });
   }
 
+  if (runtimeLocalEl) {
+    runtimeLocalEl.addEventListener('change', () => {
+      if (runtimeLocalEl.checked) {
+        setRuntimeUi('local');
+      }
+    });
+  }
+
+  if (runtimeEdgeEl) {
+    runtimeEdgeEl.addEventListener('change', () => {
+      if (runtimeEdgeEl.checked) {
+        setRuntimeUi('edge');
+      }
+    });
+  }
+
   if (carlaStopModalEl) {
     carlaStopModalEl.addEventListener('click', (event) => {
       const target = event.target;
@@ -480,7 +543,17 @@ function bindControls() {
   }
 
   if (carlaExeInput) {
-    carlaExeInput.addEventListener('change', updateCarlaExePathLabel);
+    carlaExeInput.addEventListener('change', () => {
+      const file = carlaExeInput.files && carlaExeInput.files[0];
+      if (file && carlaExeTextInput) {
+        carlaExeTextInput.value = file.path || carlaExeInput.value || '';
+      }
+      updateCarlaExePathLabel();
+    });
+  }
+
+  if (carlaExeTextInput) {
+    carlaExeTextInput.addEventListener('input', updateCarlaExePathLabel);
   }
 
   if (carlaLaunchConfirm) {
@@ -554,6 +627,7 @@ function init() {
   `;
   document.head.appendChild(style);
 
+  setRuntimeUi(getRuntimeMode());
   bindControls();
   refreshStatus();
   connectWs();

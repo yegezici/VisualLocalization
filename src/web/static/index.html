@@ -81,8 +81,22 @@
           <input id="carla-port" type="number" value="2000" />
         </div>
         <div class="form-row">
-          <label for="loc-host">Localization Host (placeholder)</label>
+          <label for="loc-host">Localization Host</label>
           <input id="loc-host" value="127.0.0.1" />
+        </div>
+        <div class="form-row">
+          <span class="form-label">Localization Runtime</span>
+          <div class="choice-row" role="radiogroup" aria-label="Localization runtime">
+            <label class="choice">
+              <input type="radio" name="runtime" id="runtime-local" value="local" checked />
+              <span>Local (This PC)</span>
+            </label>
+            <label class="choice">
+              <input type="radio" name="runtime" id="runtime-edge" value="edge" />
+              <span>Edge (Jetson Nano)</span>
+            </label>
+          </div>
+          <div id="runtime-hint" class="form-hint">Runs localization server on this machine.</div>
         </div>
         <div class="form-row">
           <label for="loc-port">Localization Port</label>
@@ -133,7 +147,8 @@
         <div class="form-row">
           <label for="carla-exe">CARLA Executable</label>
           <input id="carla-exe" type="file" accept=".exe" />
-          <div id="carla-exe-path" class="file-path">No file selected</div>
+          <input id="carla-exe-text" placeholder="/mnt/c/CARLA/CarlaUE4.exe" />
+          <div id="carla-exe-path" class="file-path">Selected file path will appear here.</div>
         </div>
         <div class="form-row">
           <label for="carla-args">CARLA Extra Args (optional)</label>

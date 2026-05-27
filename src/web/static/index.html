@@ -81,6 +81,10 @@
           <input id="carla-port" type="number" value="2000" />
         </div>
         <div class="form-row">
+          <span class="form-label">CARLA RPC</span>
+          <div id="carla-rpc" class="rpc-status is-unknown">Unknown</div>
+        </div>
+        <div class="form-row">
           <label for="loc-host">Localization Host</label>
           <input id="loc-host" value="127.0.0.1" />
         </div>
@@ -107,6 +111,20 @@
           <input id="web-rate" type="number" value="6" step="1" />
         </div>
         <div class="advanced-panel is-open">
+          <div class="form-row">
+            <span class="form-label">Preview Mode</span>
+            <div class="choice-row" role="radiogroup" aria-label="Preview mode">
+              <label class="choice">
+                <input type="radio" name="preview-mode" id="preview-fs" value="fullscreen" checked />
+                <span>Fullscreen</span>
+              </label>
+              <label class="choice">
+                <input type="radio" name="preview-mode" id="preview-windowed" value="windowed" />
+                <span>Windowed</span>
+              </label>
+            </div>
+            <div class="form-hint">Fullscreen uses the whole display. Windowed keeps a resizable preview.</div>
+          </div>
           <div class="form-row toggle">
             <input id="no-preview" type="checkbox" />
             <label for="no-preview">Disable Pygame preview</label>
@@ -130,7 +148,7 @@
           </button>
         </div>
         <div class="note">
-          Autopilot is enabled. Use L to localize; results appear here.
+          Use W, A, S, D to move; L to localize; Q to quit. Results appear here.
         </div>
       </section>
     </main>
@@ -146,7 +164,7 @@
       <div class="modal-body">
         <div class="form-row">
           <label for="carla-exe">CARLA Executable</label>
-          <input id="carla-exe" type="file" accept=".exe" />
+          <input id="carla-exe" type="file" accept=".exe,.sh" />
           <input id="carla-exe-text" placeholder="/mnt/c/CARLA/CarlaUE4.exe" />
           <div id="carla-exe-path" class="file-path">Selected file path will appear here.</div>
         </div>
@@ -175,6 +193,29 @@
       <div class="modal-actions">
         <button class="btn" type="button" data-modal-close="true">Cancel</button>
         <button id="carla-stop-confirm" class="btn primary" type="button">Stop CARLA</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="stop-modal" class="modal" aria-hidden="true" role="dialog" aria-labelledby="stop-modal-title">
+    <div class="modal-backdrop" data-modal-close="true"></div>
+    <div class="modal-card modal-card--alert" role="document">
+      <div class="modal-header">
+        <h3 id="stop-modal-title">Stop All Services</h3>
+        <button class="icon-btn" type="button" data-modal-close="true" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-alert">
+          <div class="modal-alert-icon">!</div>
+          <div>
+            <div class="modal-alert-title">This will stop simulator.</div>
+            <div class="modal-alert-text">Active sessions will be terminated, and the preview window will close.</div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" type="button" data-modal-close="true">Cancel</button>
+        <button id="stop-confirm" class="btn primary" type="button">Stop Everything</button>
       </div>
     </div>
   </div>

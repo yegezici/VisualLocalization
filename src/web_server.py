@@ -3,11 +3,16 @@
 import argparse
 import asyncio
 import json
+import logging
 import os
 import shlex
+import shutil
 import signal
+import socket
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
@@ -22,6 +27,9 @@ INDEX_FILE = STATIC_DIR / 'index.html'
 
 app = FastAPI()
 app.mount('/static', StaticFiles(directory=str(STATIC_DIR)), name='static')
+
+logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
+logger = logging.getLogger('web_server')
 
 
 class ProcessState:
@@ -74,6 +82,7 @@ async def get_status() -> JSONResponse:
         'visual_localization_running': state.visual_localization is not None and state.visual_localization.poll() is None,
         'localization_server_running': state.localization_server is not None and state.localization_server.poll() is None,
         'carla_sim_running': state.carla_sim is not None and state.carla_sim.poll() is None,
+        'carla_rpc_up': is_tcp_port_open('127.0.0.1', 2000),
     })
 
 
@@ -87,6 +96,24 @@ async def post_telemetry(payload: Dict[str, Any]) -> JSONResponse:
 def build_python_command(script_name: str, args: List[str]) -> List[str]:
     script_path = ROOT_DIR / script_name
     return [sys.executable, str(script_path), *args]
+
+
+def build_python_command_for_path(script_path: str, args: List[str]) -> List[str]:
+    return [sys.executable, script_path, *args]
+
+
+def _stream_process_output(proc: subprocess.Popen, name: str) -> None:
+    if proc.stdout is None:
+        return
+    for line in iter(proc.stdout.readline, ''):
+        line = line.rstrip()
+        if line:
+            logger.info('%s | %s', name, line)
+
+
+def start_process_logger(proc: subprocess.Popen, name: str) -> None:
+    thread = threading.Thread(target=_stream_process_output, args=(proc, name), daemon=True)
+    thread.start()
 
 
 def terminate_process(proc: Optional[subprocess.Popen]) -> None:
@@ -105,23 +132,95 @@ def terminate_process(proc: Optional[subprocess.Popen]) -> None:
 def launch_carla_sim(exe_path: str, args: List[str]) -> subprocess.Popen:
     if not exe_path:
         raise ValueError('CARLA executable path is required.')
+    exe_path = resolve_carla_exe_path(exe_path)
     exe = Path(exe_path)
     if not exe.exists():
         raise FileNotFoundError(exe)
     command = [str(exe), *args]
-    return subprocess.Popen(
+    proc = subprocess.Popen(
         command,
         cwd=str(exe.parent),
         creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        universal_newlines=True,
+        bufsize=1,
     )
+    start_process_logger(proc, 'carla')
+    return proc
+
+
+def normalize_windows_path_for_wsl(path: str) -> str:
+    if not path or os.name == 'nt':
+        return path
+    if path.startswith('/'):
+        return path
+    if len(path) >= 2 and path[1] == ':' and path[0].isalpha():
+        drive = path[0].lower()
+        rest = path[2:].lstrip('\\/')
+        rest = rest.replace('\\', '/')
+        return f'/mnt/{drive}/{rest}'
+    return path
+
+
+def resolve_carla_exe_path(exe_path: str) -> str:
+    exe_path = exe_path.strip()
+    if not exe_path:
+        return exe_path
+
+    if 'fakepath' in exe_path.lower():
+        exe_path = os.path.basename(exe_path)
+
+    candidate = Path(exe_path)
+    if candidate.is_absolute() and candidate.exists():
+        return str(candidate)
+    if candidate.exists():
+        return str(candidate.resolve())
+
+    which_path = shutil.which(exe_path)
+    if which_path:
+        return which_path
+
+    carla_root = os.environ.get('CARLA_ROOT') or os.environ.get('CARLA_EXE')
+    if carla_root:
+        root_path = Path(carla_root)
+        if root_path.is_dir():
+            root_candidate = root_path / exe_path
+            if root_candidate.exists():
+                return str(root_candidate)
+        elif root_path.exists():
+            return str(root_path)
+
+    return exe_path
+
+
+def is_tcp_port_open(host: str, port: int, timeout_s: float = 0.5) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout_s):
+            return True
+    except OSError:
+        return False
+
+
+async def wait_for_tcp_service(host: str, port: int, timeout_s: float = 30.0) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=1.0):
+                return True
+        except OSError:
+            await asyncio.sleep(0.5)
+    return False
 
 
 @app.post('/api/start')
 async def start_processes(payload: Dict[str, Any]) -> JSONResponse:
     start_visual = bool(payload.get('start_visual', True))
-    start_localization_server = bool(payload.get('start_localization_server', True))
 
-    if start_visual and (state.visual_localization is None or state.visual_localization.poll() is not None):
+    if start_visual:
+        if state.visual_localization is not None and state.visual_localization.poll() is None:
+            terminate_process(state.visual_localization)
+            state.visual_localization = None
         args = [
             '--host', str(payload.get('carla_host', '127.0.0.1')),
             '--port', str(payload.get('carla_port', 2000)),
@@ -132,25 +231,50 @@ async def start_processes(payload: Dict[str, Any]) -> JSONResponse:
             '--web-port', str(payload.get('web_port', 8000)),
             '--web-rate', str(payload.get('web_rate', 6.0)),
         ]
+        if 'preview_fullscreen' in payload:
+            if payload.get('preview_fullscreen'):
+                args.append('--fs')
+            else:
+                args.append('--no-fs')
         if payload.get('no_preview_window'):
             args.append('--no-preview-window')
         state.visual_localization = subprocess.Popen(
             build_python_command('visual_localization.py', args),
             cwd=str(ROOT_DIR),
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            universal_newlines=True,
+            bufsize=1,
         )
+        start_process_logger(state.visual_localization, 'visual_localization')
 
-    if start_localization_server and (state.localization_server is None or state.localization_server.poll() is not None):
-        args = [
-            '--host', str(payload.get('localization_host', '127.0.0.1')),
-            '--port', str(payload.get('localization_port', 5555)),
-            '--bundle-root', str(payload.get('bundle_root', 'sim-19-may-bundle')),
+        carla_host = str(payload.get('carla_host', '127.0.0.1'))
+        carla_port = int(payload.get('carla_port', 2000))
+        carla_ready = await wait_for_tcp_service(carla_host, carla_port)
+        if not carla_ready:
+            logger.error('CARLA RPC is not available at %s:%s', carla_host, carla_port)
+            return JSONResponse({'ok': False, 'error': 'CARLA RPC is not available yet.'})
+
+        logger.info('CARLA RPC is available at %s:%s', carla_host, carla_port)
+
+        extra_scripts = [
+            (ROOT_DIR / 'carla_examples' / 'generate_traffic.py', ['--tm-port', '9000']),
+            (ROOT_DIR / 'carla_examples' / 'add_buildings_to_map.py', ['--no-debug-boxes']),
         ]
-        state.localization_server = subprocess.Popen(
-            build_python_command('localization_server.py', args),
-            cwd=str(ROOT_DIR),
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0,
-        )
+        for script_path, script_args in extra_scripts:
+            proc = subprocess.Popen(
+                build_python_command_for_path(str(script_path), script_args),
+                cwd=str(Path(script_path).parent),
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+                bufsize=1,
+            )
+            start_process_logger(proc, Path(script_path).name)
+
+
 
     return JSONResponse({'ok': True})
 
@@ -160,7 +284,12 @@ async def launch_carla(payload: Dict[str, Any]) -> JSONResponse:
     if state.carla_sim is not None and state.carla_sim.poll() is None:
         return JSONResponse({'ok': True, 'already_running': True})
 
+    if is_tcp_port_open('127.0.0.1', 2000):
+        logger.warning('CARLA RPC port 2000 already in use; skipping launch.')
+        return JSONResponse({'ok': False, 'error': 'CARLA RPC port 2000 is already in use.'})
+
     exe_path = str(payload.get('carla_exe', '')).strip()
+    exe_path = normalize_windows_path_for_wsl(exe_path)
     args_raw = str(payload.get('carla_args', '')).strip()
     args = shlex.split(args_raw)
     try:

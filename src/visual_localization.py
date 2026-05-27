@@ -72,8 +72,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Collect CARLA camera data for HLoc/COLMAP')
     parser.add_argument('--host', default='127.0.0.1')
     parser.add_argument('--port', type=int, default=2000)
-    parser.add_argument('--res', default='1920x1080', type=parse_res,
-                        help='Per-camera resolution WIDTHxHEIGHT (default: 1920x1080)')
+    parser.add_argument('--res', default='1280x720', type=parse_res,
+                        help='Per-camera resolution WIDTHxHEIGHT (default: 1280x720)')
     parser.add_argument('--fov', type=float, default=None,
                         help='Horizontal field-of-view in degrees (default: 95.0, or 120.0 in cardinal mode)')
     parser.add_argument('--output', default='_out/hloc_capture',
@@ -84,8 +84,8 @@ def parse_args() -> argparse.Namespace:
                         help='Vehicle class to spawn (default: sedan)')
     parser.add_argument('--camera-rig', default='single', choices=['single', 'diagonal-corners', 'cardinal'],
                         help='Camera placement strategy (default: single)')
-    parser.add_argument('--display-scale', type=float, default=0.6,
-                        help='Scale factor for the live Pygame preview only; saved images keep --res (default: 0.6)')
+    parser.add_argument('--display-scale', type=float, default=1,
+                        help='Scale factor for the live Pygame preview only; saved images keep --res (default: 1)')
     parser.add_argument('--preview-every', type=int, default=1,
                         help='Update the live preview every N render-loop frames; saved images are unaffected (default: 1)')
     parser.add_argument('--preview-layout', default='single', choices=['single', 'grid'],
@@ -94,18 +94,22 @@ def parse_args() -> argparse.Namespace:
                         help='Camera shown when --preview-layout single is used (default: front)')
     parser.add_argument('--smooth-preview', action='store_true',
                         help='Use higher-quality preview scaling. Slower than the default nearest-neighbor scaling.')
+    parser.add_argument('--fullscreen', '--fs', dest='fullscreen', action='store_true',
+                        help='Enable fullscreen preview (default: on).')
+    parser.add_argument('--windowed', '--no-fs', dest='fullscreen', action='store_false',
+                        help='Use a resizable window instead of fullscreen.')
     parser.add_argument('--spawn-lat', type=float, default=DEFAULT_SPAWN_LAT,
                         help=f'Latitude used to choose the nearest vehicle spawn point (default: {DEFAULT_SPAWN_LAT})')
     parser.add_argument('--spawn-lon', type=float, default=DEFAULT_SPAWN_LON,
                         help=f'Longitude used to choose the nearest vehicle spawn point (default: {DEFAULT_SPAWN_LON})')
+    parser.add_argument('--random-spawn', action='store_true',
+                        help='Use a random vehicle spawn point instead of the nearest point to --spawn-lat/--spawn-lon')
     parser.add_argument('--loc-host', default='127.0.0.1',
                         help='Visual localization server host (default: 127.0.0.1)')
     parser.add_argument('--loc-port', type=int, default=5555,
                         help='Visual localization server port (default: 5555)')
     parser.add_argument('--loc-timeout', type=float, default=120.0,
                         help='Visual localization TCP timeout in seconds (default: 120)')
-    parser.add_argument('--no-preview-window', action='store_true',
-                        help='Disable the Pygame camera preview window')
     parser.add_argument('--web-enabled', action='store_true',
                         help='Send live telemetry to the web UI')
     parser.add_argument('--web-host', default='127.0.0.1',
@@ -116,6 +120,7 @@ def parse_args() -> argparse.Namespace:
                         help='Telemetry HTTP timeout in seconds (default: 0.25)')
     parser.add_argument('--web-rate', type=float, default=6.0,
                         help='Ground-truth telemetry rate in Hz (default: 6)')
+    parser.set_defaults(fullscreen=None)
     return parser.parse_args()
 
 
@@ -175,7 +180,18 @@ def choose_spawn_point(
     spawn_points: List[carla.Transform],
     target_lat: float,
     target_lon: float,
+    random_spawn: bool,
 ) -> carla.Transform:
+    if random_spawn:
+        spawn_point = random.choice(spawn_points)
+        geo = world_map.transform_to_geolocation(spawn_point.location)
+        print(
+            f'[INFO] Random spawn point: x={spawn_point.location.x:.2f} '
+            f'y={spawn_point.location.y:.2f} yaw={spawn_point.rotation.yaw:.2f} '
+            f'lat={geo.latitude:.8f} lon={geo.longitude:.8f}'
+        )
+        return spawn_point
+
     best_spawn = None
     best_geo = None
     best_distance = float('inf')
@@ -432,24 +448,6 @@ def apply_vehicle_control(vehicle: carla.Vehicle) -> None:
     vehicle.apply_control(control)
 
 
-def apply_vehicle_control_from_keys(vehicle: carla.Vehicle, pressed_keys: set) -> None:
-    control = carla.VehicleControl()
-
-    if 'w' in pressed_keys:
-        control.reverse = False
-        control.throttle = 0.6
-    elif 's' in pressed_keys:
-        control.reverse = True
-        control.throttle = 0.45
-
-    if 'a' in pressed_keys:
-        control.steer = -0.5
-    elif 'd' in pressed_keys:
-        control.steer = 0.5
-
-    vehicle.apply_control(control)
-
-
 def rotmat_to_quaternion_wxyz(rot: np.ndarray) -> List[float]:
     trace = float(rot[0, 0] + rot[1, 1] + rot[2, 2])
     if trace > 0.0:
@@ -631,6 +629,7 @@ def main() -> None:
             spawn_points,
             args.spawn_lat,
             args.spawn_lon,
+            args.random_spawn,
         )
         vehicle = world.spawn_actor(vehicle_bp, spawn_point)
         actors.append(vehicle)
@@ -649,7 +648,6 @@ def main() -> None:
             actors.append(sensor)
             sensor.listen(lambda data, camera_name=name: latest_images.__setitem__(camera_name, data))
         world_map = world.get_map()
-        use_pygame = not args.no_preview_window
 
         pending_localizations = []
         web_url = None
@@ -659,26 +657,32 @@ def main() -> None:
             web_url = f'http://{args.web_host}:{args.web_port}/api/telemetry'
             web_gt_interval = 1.0 / max(args.web_rate, 0.1)
 
-        if use_pygame:
-            pygame.init()
-            pygame.font.init()
-            if args.preview_layout == 'single':
-                display = pygame.display.set_mode((preview_width, preview_height), pygame.HWSURFACE | pygame.DOUBLEBUF)
-            elif len(active_camera_names) == 2:
-                display = pygame.display.set_mode((preview_width * 2, preview_height), pygame.HWSURFACE | pygame.DOUBLEBUF)
-            else:
-                display = pygame.display.set_mode((preview_width * 2, preview_height * 2), pygame.HWSURFACE | pygame.DOUBLEBUF)
-            pygame.display.set_caption('CARLA Async HLoc Capture')
-            font = pygame.font.Font(None, 26)
-            clock = pygame.time.Clock()
+        pygame.init()
+        pygame.font.init()
+        fullscreen_enabled = args.fullscreen
+        if fullscreen_enabled is None:
+            fullscreen_enabled = True
+
+        display_flags = pygame.HWSURFACE | pygame.DOUBLEBUF
+        if fullscreen_enabled:
+            display_flags |= pygame.FULLSCREEN
         else:
-            font = None
-            clock = None
+            display_flags |= pygame.RESIZABLE
+        if args.preview_layout == 'single':
+            display = pygame.display.set_mode((preview_width, preview_height), display_flags)
+        elif len(active_camera_names) == 2:
+            display = pygame.display.set_mode((preview_width * 2, preview_height), display_flags)
+        else:
+            display = pygame.display.set_mode((preview_width * 2, preview_height * 2), display_flags)
+        pygame.display.set_caption('CARLA Async HLoc Capture')
+        font = pygame.font.Font(None, 26)
+        clock = pygame.time.Clock()
 
         running = True
         capture_requested = False
         capture_id = 0
         preview_counter = 0
+        debug_counter = 0
         localization_lock = threading.Lock()
         localization_running = [False]
 
@@ -727,37 +731,42 @@ def main() -> None:
             thread.daemon = True
             thread.start()
 
-        if use_pygame:
-            print(f'Controls: autopilot enabled. SPACE to capture latest {len(active_camera_names)} camera image(s), L to localize, Q or ESC to quit.')
-        else:
-            print('Pygame preview disabled. Use external triggers for captures/localization.')
+        print(
+            f'Controls: W/A/S/D to drive, SPACE to capture latest {len(active_camera_names)} camera image(s), '
+            'L to localize, Q or ESC to quit.'
+        )
 
         while running:
-            if clock is not None:
-                clock.tick(30)
+            clock.tick(30)
             preview_counter += 1
 
-            if use_pygame:
-                for event in pygame.event.get():
-                    if event.type == pygame.QUIT:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
+                elif event.type == pygame.KEYDOWN:
+                    if event.key in (K_ESCAPE, K_q):
                         running = False
-                    elif event.type == pygame.KEYDOWN:
-                        if event.key in (K_ESCAPE, K_q):
-                            running = False
-                        elif event.key == K_SPACE:
-                            capture_requested = True
-                        elif event.key == K_l:
-                            image = latest_images.get(args.preview_camera)
-                            if image is None:
-                                print('[Localization Skipped] No camera image received yet.')
-                            else:
-                                submit_localization(image)
+                    elif event.key == K_l:
+                        image = latest_images.get(args.preview_camera)
+                        if image is None:
+                            print('[Localization Skipped] No camera image received yet.')
+                        else:
+                            submit_localization(image)
 
-                pass
-            else:
-                pass
+            apply_vehicle_control(vehicle)
+            debug_counter += 1
+            if debug_counter % 30 == 0:
+                vel = vehicle.get_velocity()
+                ctrl = vehicle.get_control()
+                speed = math.sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z)
+                focused = pygame.key.get_focused()
+                print(
+                    f'[DEBUG] focus={focused} throttle={ctrl.throttle:.2f} '
+                    f'steer={ctrl.steer:.2f} brake={ctrl.brake:.2f} '
+                    f'reverse={ctrl.reverse} speed={speed:.2f} m/s'
+                )
 
-            if use_pygame and preview_counter % args.preview_every == 0:
+            if preview_counter % args.preview_every == 0:
                 if args.preview_layout == 'single':
                     tile_order = [(args.preview_camera, (0, 0))]
                 elif len(active_camera_names) == 2:
@@ -786,10 +795,9 @@ def main() -> None:
 
                 preview_image = latest_images.get(args.preview_camera)
                 preview_frame = preview_image.frame if preview_image is not None else 'waiting'
-                hud_text = f'{args.preview_camera if args.preview_layout == "single" else args.preview_layout} | Frame: {preview_frame} | Captures: {capture_id} | SPACE: capture'
-                if font is not None:
-                    hud_surface = font.render(hud_text, True, (255, 255, 255))
-                    display.blit(hud_surface, (10, 10))
+                hud_text = f'{args.preview_camera if args.preview_layout == "single" else args.preview_layout} | Frame: {preview_frame} '
+                hud_surface = font.render(hud_text, True, (255, 255, 255))
+                display.blit(hud_surface, (10, 10))
                 pygame.display.flip()
             
             curr_tf = vehicle.get_transform()

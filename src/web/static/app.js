@@ -45,16 +45,21 @@ const carlaBtnEl = document.getElementById('carla-btn');
 const carlaStopBtnEl = document.getElementById('carla-stop-btn');
 const carlaModalEl = document.getElementById('carla-modal');
 const carlaStopModalEl = document.getElementById('carla-stop-modal');
+const stopModalEl = document.getElementById('stop-modal');
 const carlaExeInput = document.getElementById('carla-exe');
 const carlaExeTextInput = document.getElementById('carla-exe-text');
 const carlaExePathEl = document.getElementById('carla-exe-path');
 const carlaArgsInput = document.getElementById('carla-args');
 const carlaLaunchConfirm = document.getElementById('carla-launch-confirm');
 const carlaStopConfirm = document.getElementById('carla-stop-confirm');
+const stopConfirm = document.getElementById('stop-confirm');
 const runtimeLocalEl = document.getElementById('runtime-local');
 const runtimeEdgeEl = document.getElementById('runtime-edge');
 const runtimeHintEl = document.getElementById('runtime-hint');
 const locHostInput = document.getElementById('loc-host');
+const previewFsEl = document.getElementById('preview-fs');
+const previewWindowedEl = document.getElementById('preview-windowed');
+const carlaRpcEl = document.getElementById('carla-rpc');
 
 let lastGt = null;
 let mapInitialized = false;
@@ -107,6 +112,9 @@ function updateGt(lat, lon) {
   if (!mapInitialized) {
     map.setView([lat, lon], 17);
     mapInitialized = true;
+  } else {
+    // Keep GT at the center even if the user drags the map.
+    map.setView([lat, lon], map.getZoom(), { animate: true });
   }
 }
 
@@ -177,6 +185,19 @@ function setStatus(text, good) {
   statusEl.textContent = text;
   statusEl.style.borderColor = good ? '#2f5244' : '#3a2430';
   statusEl.style.background = good ? 'rgba(44, 120, 80, 0.25)' : 'rgba(120, 40, 60, 0.25)';
+}
+
+function setCarlaRpcStatus(isUp) {
+  if (!carlaRpcEl) {
+    return;
+  }
+  if (isUp === null) {
+    carlaRpcEl.textContent = 'Unknown';
+    carlaRpcEl.className = 'rpc-status is-unknown';
+    return;
+  }
+  carlaRpcEl.textContent = isUp ? 'Listening' : 'Down';
+  carlaRpcEl.className = isUp ? 'rpc-status is-up' : 'rpc-status is-down';
 }
 
 function setStartLoading(active) {
@@ -326,12 +347,32 @@ function openCarlaStopModal() {
   carlaStopModalEl.setAttribute('aria-hidden', 'false');
 }
 
+function openStopModal() {
+  if (!stopModalEl) {
+    return;
+  }
+  stopModalEl.classList.add('is-open');
+  stopModalEl.setAttribute('aria-hidden', 'false');
+}
+
+function closeStopModal() {
+  if (!stopModalEl) {
+    return;
+  }
+  stopModalEl.classList.remove('is-open');
+  stopModalEl.setAttribute('aria-hidden', 'true');
+}
+
 function closeCarlaStopModal() {
   if (!carlaStopModalEl) {
     return;
   }
   carlaStopModalEl.classList.remove('is-open');
   carlaStopModalEl.setAttribute('aria-hidden', 'true');
+}
+
+function isFakePath(pathValue) {
+  return /fakepath/i.test(pathValue || '');
 }
 
 function getCarlaExePath() {
@@ -342,9 +383,15 @@ function getCarlaExePath() {
     return '';
   }
   if (carlaExeInput.files && carlaExeInput.files[0]) {
-    return carlaExeInput.files[0].path || carlaExeInput.value || '';
+    const file = carlaExeInput.files[0];
+    const candidate = file.path || carlaExeInput.value || '';
+    if (candidate && !isFakePath(candidate)) {
+      return candidate;
+    }
+    return file.name || '';
   }
-  return carlaExeInput.value || '';
+  const fallback = carlaExeInput.value || '';
+  return isFakePath(fallback) ? '' : fallback;
 }
 
 function updateCarlaExePathLabel() {
@@ -359,10 +406,17 @@ function updateCarlaExePathLabel() {
   const file = carlaExeInput && carlaExeInput.files && carlaExeInput.files[0];
   if (file) {
     const displayPath = file.path || file.name || carlaExeInput.value;
-    carlaExePathEl.textContent = displayPath || 'No file selected';
+    if (isFakePath(displayPath)) {
+      carlaExePathEl.textContent = 'Browser hides the full path. Using filename; paste full path if needed.';
+    } else {
+      carlaExePathEl.textContent = displayPath || 'No file selected';
+    }
     return;
   }
-  carlaExePathEl.textContent = (carlaExeInput && carlaExeInput.value) || 'No file selected';
+  const rawValue = (carlaExeInput && carlaExeInput.value) || '';
+  carlaExePathEl.textContent = isFakePath(rawValue)
+    ? 'Browser hides the full path. Paste the path above.'
+    : (rawValue || 'No file selected');
 }
 
 function scheduleStartTimeout() {
@@ -411,6 +465,7 @@ async function refreshStatus() {
     const res = await fetch('/api/status');
     const data = await res.json();
     setCarlaButtonState(!!data.carla_sim_running);
+    setCarlaRpcStatus(typeof data.carla_rpc_up === 'boolean' ? data.carla_rpc_up : null);
     if (data.visual_localization_running) {
       const carlaNote = data.carla_sim_running ? ' + CARLA' : '';
       setStatus(`Running${carlaNote}`, true);
@@ -426,6 +481,7 @@ async function refreshStatus() {
     }
   } catch (err) {
     setStatus('Disconnected', false);
+    setCarlaRpcStatus(null);
     endStartLoading();
     clearStartTimeout();
   }
@@ -480,6 +536,9 @@ function bindControls() {
     setStartLoading(true);
     scheduleStartTimeout();
     const runtimeMode = getRuntimeMode();
+    const fullscreenSelected = previewFsEl ? previewFsEl.checked : true;
+    const windowedSelected = previewWindowedEl ? previewWindowedEl.checked : false;
+    const previewFullscreen = windowedSelected ? false : fullscreenSelected;
     const payload = {
       start_visual: true,
       start_localization_server: runtimeMode === 'local',
@@ -490,6 +549,7 @@ function bindControls() {
       web_host: location.hostname,
       web_port: Number(location.port || 80),
       web_rate: Number(document.getElementById('web-rate').value || 6),
+      preview_fullscreen: previewFullscreen,
       no_preview_window: document.getElementById('no-preview').checked
     };
     try {
@@ -503,9 +563,7 @@ function bindControls() {
   });
 
   stopBtn.addEventListener('click', async () => {
-    await postJson('/api/stop', {});
-    await refreshStatus();
-    clearStartTimeout();
+    openStopModal();
   });
 
   if (carlaModalEl) {
@@ -542,11 +600,21 @@ function bindControls() {
     });
   }
 
+  if (stopModalEl) {
+    stopModalEl.addEventListener('click', (event) => {
+      const target = event.target;
+      if (target && target.dataset && target.dataset.modalClose === 'true') {
+        closeStopModal();
+      }
+    });
+  }
+
   if (carlaExeInput) {
     carlaExeInput.addEventListener('change', () => {
       const file = carlaExeInput.files && carlaExeInput.files[0];
       if (file && carlaExeTextInput) {
-        carlaExeTextInput.value = file.path || carlaExeInput.value || '';
+        const candidate = file.path || carlaExeInput.value || '';
+        carlaExeTextInput.value = isFakePath(candidate) ? '' : candidate;
       }
       updateCarlaExePathLabel();
     });
@@ -560,7 +628,7 @@ function bindControls() {
     carlaLaunchConfirm.addEventListener('click', async () => {
       const exePath = getCarlaExePath();
       if (!exePath) {
-        showToast('Please select the CARLA executable.', 'error');
+        showToast('Paste the full CARLA path. Browser hides it in file picker.', 'error');
         return;
       }
       closeCarlaModal();
@@ -589,6 +657,16 @@ function bindControls() {
       await refreshStatus();
       endCarlaLoading();
       showToast('CARLA stopped', 'info');
+    });
+  }
+
+  if (stopConfirm) {
+    stopConfirm.addEventListener('click', async () => {
+      closeStopModal();
+      await postJson('/api/stop', {});
+      await refreshStatus();
+      clearStartTimeout();
+      showToast('All services stopped', 'info');
     });
   }
 

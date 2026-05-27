@@ -335,6 +335,46 @@ body {
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
+.rpc-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(120, 140, 160, 0.4);
+  background: rgba(10, 16, 22, 0.6);
+  width: fit-content;
+}
+
+.rpc-status::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #8ca0b0;
+  box-shadow: 0 0 8px rgba(140, 160, 176, 0.55);
+}
+
+.rpc-status.is-up {
+  border-color: rgba(77, 196, 134, 0.6);
+  background: rgba(44, 120, 80, 0.2);
+}
+
+.rpc-status.is-up::before {
+  background: #4dc486;
+  box-shadow: 0 0 8px rgba(77, 196, 134, 0.7);
+}
+
+.rpc-status.is-down {
+  border-color: rgba(255, 92, 92, 0.5);
+  background: rgba(120, 40, 60, 0.2);
+}
+
+.rpc-status.is-down::before {
+  background: #ff5c5c;
+  box-shadow: 0 0 8px rgba(255, 92, 92, 0.7);
+}
   border-radius: 10px;
   background: rgba(10, 16, 24, 0.65);
   border: 1px solid rgba(110, 130, 150, 0.28);
@@ -499,6 +539,11 @@ body {
   animation: modal-in 0.2s ease-out;
 }
 
+.modal-card--alert {
+  border-color: rgba(255, 107, 87, 0.45);
+  box-shadow: 0 20px 50px rgba(255, 107, 87, 0.12), 0 20px 40px rgba(2, 8, 16, 0.55);
+}
+
 .modal-header {
   display: flex;
   align-items: center;
@@ -523,6 +568,41 @@ body {
 .modal-body {
   display: grid;
   gap: 12px;
+}
+
+.modal-alert {
+  display: grid;
+  grid-template-columns: 40px 1fr;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(255, 107, 87, 0.1);
+  border: 1px solid rgba(255, 107, 87, 0.35);
+}
+
+.modal-alert-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 107, 87, 0.2);
+  color: #ffb4a9;
+  font-weight: 700;
+  font-size: 18px;
+  border: 1px solid rgba(255, 107, 87, 0.5);
+  box-shadow: 0 0 12px rgba(255, 107, 87, 0.35);
+}
+
+.modal-alert-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.modal-alert-text {
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .file-path {

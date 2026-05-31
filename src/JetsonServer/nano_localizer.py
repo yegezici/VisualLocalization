@@ -12,6 +12,8 @@ import math
 import os
 import sys
 import threading
+import time
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
@@ -166,6 +168,16 @@ def _load_h5_tree(path: Path) -> Dict[str, Dict[str, np.ndarray]]:
     return items
 
 
+def _list_h5_feature_groups(path: Path) -> List[str]:
+    items: List[str] = []
+    with h5py.File(path, 'r') as h5:
+        def visit(name: str, obj) -> None:
+            if isinstance(obj, h5py.Group) and any(isinstance(v, h5py.Dataset) for v in obj.values()):
+                items.append(name)
+        h5.visititems(visit)
+    return items
+
+
 def _load_global_descriptors(path: Path) -> Dict[str, np.ndarray]:
     raw = _load_h5_tree(path)
     descriptors = {}
@@ -212,6 +224,8 @@ class LiveCarlaLocalizer:
         local_max_size: int = 512,
         max_keypoints: int = 1024,
         device: Optional[str] = None,
+        netvlad_dtype: str = 'auto',
+        reference_feature_cache_size: int = 16,
     ) -> None:
         self.bundle_root = Path(bundle_root)
         self.sfm_root = self.bundle_root / 'sfm'
@@ -223,6 +237,9 @@ class LiveCarlaLocalizer:
         self.retrieval_max_size = int(retrieval_max_size)
         self.local_max_size = int(local_max_size)
         self.max_keypoints = int(max_keypoints)
+        self.netvlad_dtype = str(netvlad_dtype).lower()
+        self.reference_feature_cache_size = int(reference_feature_cache_size)
+        self.reference_feature_cache = OrderedDict()
         self.executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix='carla-localizer')
         self.lock = threading.Lock()
         self.inference_lock = threading.Lock()
@@ -230,6 +247,12 @@ class LiveCarlaLocalizer:
 
         self._import_runtime_dependencies()
         self.device = self.torch.device(device or ('cuda' if self.torch.cuda.is_available() else 'cpu'))
+        if self.device.type == 'cpu':
+            print(
+                '[Device Warning] torch CUDA is not active; NetVLAD on Jetson CPU can take minutes. '
+                'Use a CUDA-enabled PyTorch environment and pass --device cuda.',
+                flush=True,
+            )
         self._load_map()
         self._load_reference_features()
         self._load_models()
@@ -272,9 +295,9 @@ class LiveCarlaLocalizer:
         self.image_name_to_id = {image.name: image_id for image_id, image in self.reconstruction.images.items()}
 
     def _load_reference_features(self) -> None:
-        self.db_features = _load_h5_tree(self.db_features_path)
+        self.db_feature_index = {name: None for name in _list_h5_feature_groups(self.db_features_path)}
         self.db_global = _load_global_descriptors(self.db_global_path)
-        if not self.db_features:
+        if not self.db_feature_index:
             raise RuntimeError(f'No reference local features found in {self.db_features_path}')
         if not self.db_global:
             raise RuntimeError(f'No reference global descriptors found in {self.db_global_path}')
@@ -290,6 +313,14 @@ class LiveCarlaLocalizer:
         if not self.reference_global:
             raise RuntimeError('No registered images have matching NetVLAD descriptors.')
         self.reference_global = np.stack(self.reference_global, axis=0).astype(np.float32)
+        print(
+            '[Map Loaded] '
+            f'registered_refs={len(self.reference_names)} '
+            f'global_descriptors={len(self.db_global)} '
+            f'local_feature_groups={len(self.db_feature_index)} '
+            f'local_features=lazy cache_size={self.reference_feature_cache_size}',
+            flush=True,
+        )
 
     def _load_models(self) -> None:
         self._add_hloc_third_party_paths()
@@ -298,6 +329,8 @@ class LiveCarlaLocalizer:
         retrieval_conf = copy.deepcopy(self.extract_features.confs['netvlad'])
         matcher_conf = copy.deepcopy(self.match_features.confs['superpoint+lightglue'])
         feature_conf['model']['max_keypoints'] = self.max_keypoints
+        retrieval_conf['model']['name'] = 'netvlad_jetson'
+        retrieval_conf['model']['dtype'] = self._resolve_netvlad_dtype()
 
         try:
             SuperPoint = self.dynamic_load(self.extractors, feature_conf['model']['name'])
@@ -313,9 +346,36 @@ class LiveCarlaLocalizer:
                 ) from exc
             raise
 
-        self.superpoint = SuperPoint(feature_conf['model']).eval().to(self.device)
+        print(f'[Model Load] NetVLAD dtype={retrieval_conf["model"]["dtype"]} device={self.device}', flush=True)
         self.netvlad = NetVLAD(retrieval_conf['model']).eval().to(self.device)
+        if self.device.type == 'cuda':
+            self.torch.cuda.empty_cache()
+        self.superpoint = SuperPoint(feature_conf['model']).eval().to(self.device)
         self.lightglue = LightGlue(matcher_conf['model']).eval().to(self.device)
+
+    def _resolve_netvlad_dtype(self) -> str:
+        if self.netvlad_dtype not in {'auto', 'float32', 'float16'}:
+            raise ValueError(f'Unsupported netvlad_dtype={self.netvlad_dtype!r}')
+        if self.netvlad_dtype in {'float32', 'float16'}:
+            dtype = self.netvlad_dtype
+        else:
+            dtype = 'float32'
+        if dtype == 'float16' and self.device.type == 'cuda':
+            try:
+                major, minor = self.torch.cuda.get_device_capability(self.device)
+                device_name = self.torch.cuda.get_device_name(self.device)
+            except Exception:
+                major, minor = 0, 0
+                device_name = 'unknown CUDA device'
+            if major < 7:
+                print(
+                    '[Model Load Warning] '
+                    f'NetVLAD float16 requested on {device_name} sm_{major}{minor}. '
+                    'Jetson Nano-class GPUs can be slower or unstable with PyTorch fp16; '
+                    'use --netvlad-dtype float32 if extraction stalls.',
+                    flush=True,
+                )
+        return dtype
 
     def _add_hloc_third_party_paths(self) -> None:
         candidates = []
@@ -397,7 +457,10 @@ class LiveCarlaLocalizer:
                     self.torch.cuda.empty_cache()
 
     def _localize_xyz_heading_impl(self, rgb_array: np.ndarray) -> Dict[str, object]:
+        timings: Dict[str, float] = {}
+        total_start = time.perf_counter()
         with self.torch.inference_mode():
+            start = time.perf_counter()
             color_tensor = rgb_to_color_tensor(rgb_array, self.torch, self.device)
             color_tensor = resize_tensor_max(color_tensor, self.retrieval_max_size, self.torch)
             gray_tensor = rgb_to_gray_tensor(rgb_array, self.torch, self.device)
@@ -406,14 +469,34 @@ class LiveCarlaLocalizer:
                 self.local_max_size,
                 self.torch,
             )
+            self._sync_device()
+            timings['tensor_ms'] = (time.perf_counter() - start) * 1000.0
             print(
                 '[Extract] '
                 f'retrieval_tensor={tuple(color_tensor.shape[-2:])} '
-                f'local_tensor={tuple(gray_tensor.shape[-2:])}',
+                f'local_tensor={tuple(gray_tensor.shape[-2:])} '
+                f'tensor_ms={timings["tensor_ms"]:.1f}'
+                f'{self._cuda_memory_text()}',
                 flush=True,
             )
+
+            print('[Extract] netvlad_start', flush=True)
+            start = time.perf_counter()
             query_global = self._extract_global(color_tensor)
+            self._sync_device()
+            timings['netvlad_ms'] = (time.perf_counter() - start) * 1000.0
+            print(
+                '[Extract] '
+                f'netvlad_ms={timings["netvlad_ms"]:.1f}'
+                f'{self._cuda_memory_text()}',
+                flush=True,
+            )
+
+            print('[Extract] superpoint_start', flush=True)
+            start = time.perf_counter()
             query_features = self._extract_local(gray_tensor)
+            self._sync_device()
+            timings['superpoint_ms'] = (time.perf_counter() - start) * 1000.0
             query_features['keypoints'][:, 0] = (query_features['keypoints'][:, 0] + 0.5) * local_scale_x - 0.5
             query_features['keypoints'][:, 1] = (query_features['keypoints'][:, 1] + 0.5) * local_scale_y - 0.5
             query_features['image_size'] = np.array(
@@ -421,14 +504,33 @@ class LiveCarlaLocalizer:
                 dtype=np.float32,
             )
             query_features = _limit_features(query_features, self.max_keypoints)
-            print(f'[Extract] query_keypoints={len(query_features["keypoints"])}', flush=True)
+            print(
+                '[Extract] '
+                f'query_keypoints={len(query_features["keypoints"])} '
+                f'superpoint_ms={timings["superpoint_ms"]:.1f}',
+                flush=True,
+            )
 
             del color_tensor, gray_tensor
             if self.device.type == 'cuda':
                 self.torch.cuda.empty_cache()
 
+        start = time.perf_counter()
         retrieved = self._retrieve(query_global)
-        return self._localize_from_references(query_features, retrieved, rgb_array.shape[1], rgb_array.shape[0])
+        timings['retrieval_ms'] = (time.perf_counter() - start) * 1000.0
+        timings['feature_total_ms'] = (time.perf_counter() - total_start) * 1000.0
+        print(
+            '[Retrieve] '
+            f'refs={retrieved} retrieval_ms={timings["retrieval_ms"]:.1f}',
+            flush=True,
+        )
+        return self._localize_from_references(
+            query_features,
+            retrieved,
+            rgb_array.shape[1],
+            rgb_array.shape[0],
+            timings,
+        )
 
     def _localize_from_references(
         self,
@@ -436,12 +538,18 @@ class LiveCarlaLocalizer:
         references: Sequence[str],
         width: int,
         height: int,
+        timings: Optional[Dict[str, float]] = None,
     ) -> Dict[str, object]:
+        timings = dict(timings or {})
+        start = time.perf_counter()
         points2d, points3d, match_log = self._match_to_3d(query_features, references)
+        self._sync_device()
+        timings['matching_ms'] = (time.perf_counter() - start) * 1000.0
         print(
             '[Pose Input] '
             f'correspondences={len(points2d)} refs={list(references)} '
-            f'per_ref={match_log["per_ref"]}',
+            f'per_ref={match_log["per_ref"]} '
+            f'matching_ms={timings["matching_ms"]:.1f}',
             flush=True,
         )
         if len(points2d) < 6:
@@ -452,9 +560,12 @@ class LiveCarlaLocalizer:
                 'num_correspondences': int(len(points2d)),
                 'match_stats': match_log['per_ref'],
                 'retrieved': list(references),
+                'timings_ms': self._rounded_timings(timings),
             }
 
+        start = time.perf_counter()
         ret = self._estimate_pose(points2d, points3d, width, height)
+        timings['pose_ms'] = (time.perf_counter() - start) * 1000.0
         if ret is None:
             return {
                 'success': False,
@@ -463,6 +574,7 @@ class LiveCarlaLocalizer:
                 'num_correspondences': int(len(points2d)),
                 'match_stats': match_log['per_ref'],
                 'retrieved': list(references),
+                'timings_ms': self._rounded_timings(timings),
             }
         num_inliers = self._pose_result_num_inliers(ret, len(points2d))
         inlier_counts = self._count_inliers_by_reference(ret, match_log['records'])
@@ -482,6 +594,7 @@ class LiveCarlaLocalizer:
                 'inliers_by_ref': inlier_counts,
                 'match_stats': match_log['per_ref'],
                 'retrieved': list(references),
+                'timings_ms': self._rounded_timings(timings),
             }
 
         r_wc_rh, tvec = self._pose_result_to_rt(ret)
@@ -501,6 +614,7 @@ class LiveCarlaLocalizer:
             'inliers_by_ref': inlier_counts,
             'match_stats': match_log['per_ref'],
             'retrieved': list(references),
+            'timings_ms': self._rounded_timings(timings),
         }
 
     def _extract_global(self, image_tensor: object) -> np.ndarray:
@@ -553,10 +667,10 @@ class LiveCarlaLocalizer:
             if ref_id is None:
                 continue
             ref_image = self.reconstruction.images[ref_id]
-            ref_key = _find_loaded_name(ref_name, self.db_features)
+            ref_key = _find_loaded_name(ref_name, self.db_feature_index)
             if ref_key is None:
                 continue
-            ref_features = self._prepare_reference_features(self.db_features[ref_key])
+            ref_features = self._prepare_reference_features(self._load_reference_feature_group(ref_key))
             matches = self._match_pair(query_features, ref_features)
             accepted = 0
 
@@ -617,6 +731,23 @@ class LiveCarlaLocalizer:
         features['image_size'] = np.array([self.camera.width, self.camera.height], dtype=np.float32)
         return _limit_features(features, self.max_keypoints)
 
+    def _load_reference_feature_group(self, key: str) -> Dict[str, np.ndarray]:
+        if self.reference_feature_cache_size > 0 and key in self.reference_feature_cache:
+            self.reference_feature_cache.move_to_end(key)
+            return self.reference_feature_cache[key]
+
+        with h5py.File(self.db_features_path, 'r') as h5:
+            if key not in h5:
+                raise KeyError(f'Reference feature group not found in {self.db_features_path}: {key}')
+            values = _read_h5_feature_group(h5[key])
+
+        if self.reference_feature_cache_size > 0:
+            self.reference_feature_cache[key] = values
+            self.reference_feature_cache.move_to_end(key)
+            while len(self.reference_feature_cache) > self.reference_feature_cache_size:
+                self.reference_feature_cache.popitem(last=False)
+        return values
+
     def _match_pair(self, query: Dict[str, np.ndarray], ref: Dict[str, np.ndarray]) -> np.ndarray:
         print(
             '[Match] '
@@ -656,6 +787,21 @@ class LiveCarlaLocalizer:
         width, height = int(image_size[0]), int(image_size[1])
         data['image' + suffix] = self.torch.empty((1, 1, height, width), device=self.device)
         return data
+
+    def _sync_device(self) -> None:
+        if self.device.type == 'cuda':
+            self.torch.cuda.synchronize(self.device)
+
+    def _cuda_memory_text(self) -> str:
+        if self.device.type != 'cuda':
+            return ''
+        allocated = self.torch.cuda.memory_allocated(self.device) / (1024.0 * 1024.0)
+        reserved = self.torch.cuda.memory_reserved(self.device) / (1024.0 * 1024.0)
+        return f' cuda_alloc_mb={allocated:.1f} cuda_reserved_mb={reserved:.1f}'
+
+    @staticmethod
+    def _rounded_timings(timings: Dict[str, float]) -> Dict[str, float]:
+        return {key: round(float(value), 1) for key, value in timings.items()}
 
     def _image_point3d_ids(self, image) -> np.ndarray:
         ids = []

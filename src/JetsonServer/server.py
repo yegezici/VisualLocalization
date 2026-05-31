@@ -112,6 +112,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--min-inliers', type=int, default=15,
                         help='Reject pose estimates with fewer PnP inliers (default: 15)')
     parser.add_argument('--device', default=None, help='torch device override, e.g. cuda or cpu')
+    parser.add_argument('--netvlad-dtype', choices=['auto', 'float32', 'float16'], default='auto',
+                        help='NetVLAD model dtype; auto defaults to float32 for Jetson stability')
+    parser.add_argument('--reference-feature-cache-size', type=int, default=16,
+                        help='Number of reference feature groups to cache in RAM; 0 disables cache')
     parser.add_argument('--dry-run', action='store_true',
                         help='Receive frames and return a test response without loading localization models')
     return parser.parse_args()
@@ -134,6 +138,8 @@ def main() -> None:
             local_max_size=args.local_max_size,
             max_keypoints=args.max_keypoints,
             device=args.device,
+            netvlad_dtype=args.netvlad_dtype,
+            reference_feature_cache_size=args.reference_feature_cache_size,
         )
 
     server = ThreadedLocalizationServer(

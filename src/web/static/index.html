@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CARLA Web Demo</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
+</head>
+<body>
+  <canvas id="starfield" class="starfield" aria-hidden="true"></canvas>
+  <div class="layout">
+    <header class="topbar">
+      <div class="brand">
+        <span class="dot"></span>
+        <div>
+          <div class="title">CARLA Visual Localization</div>
+          <div class="subtitle">Live demo control + OSM map</div>
+        </div>
+      </div>
+      <div class="status" id="status">Disconnected</div>
+    </header>
+    <div id="start-progress" class="start-progress" aria-hidden="true">
+      <div class="start-progress-bar"></div>
+    </div>
+
+    <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
+
+    <main class="main">
+      <div class="map-column">
+        <section class="panel map-panel">
+          <div class="pulse-ring" id="pulse-ring"></div>
+          <div id="map" class="map"></div>
+          <div class="legend">
+            <span class="legend-item"><span class="legend-dot gt"></span> Ground Truth</span>
+            <span class="legend-item"><span class="legend-dot est"></span> Estimated</span>
+          </div>
+        </section>
+        <section class="panel results-panel">
+          <div class="map-info">
+            <div class="info-title">Latest Localization</div>
+            <div class="info-grid">
+              <div>
+                <div class="info-label">Estimated (lat, lon)</div>
+                <div id="info-est" class="info-value">--</div>
+              </div>
+              <div>
+                <div class="info-label">Ground Truth (lat, lon)</div>
+                <div id="info-gt" class="info-value">--</div>
+              </div>
+              <div>
+                <div class="info-label">Error (meters)</div>
+                <div id="info-error" class="info-value">--</div>
+              </div>
+            </div>
+          </div>
+          <div class="history-panel">
+            <div class="info-title">Last 5 Localizations</div>
+            <div class="history-header">
+              <span>Error (m)</span>
+              <span>Est (lat, lon)</span>
+            </div>
+            <div id="history-list" class="history-list"></div>
+          </div>
+        </section>
+      </div>
+
+      <section class="panel control-panel">
+        <h2>Controls</h2>
+        <div class="form-row">
+          <label for="carla-host">CARLA Host</label>
+          <input id="carla-host" value="127.0.0.1" />
+        </div>
+        <div class="form-row">
+          <label for="carla-port">CARLA Port</label>
+          <input id="carla-port" type="number" value="2000" />
+        </div>
+        <div class="form-row">
+          <span class="form-label">CARLA RPC</span>
+          <div id="carla-rpc" class="rpc-status is-unknown">Unknown</div>
+        </div>
+        <div class="form-row">
+          <label for="loc-host">Localization Host</label>
+          <input id="loc-host" value="127.0.0.1" />
+        </div>
+        <div class="form-row">
+          <span class="form-label">Localization Runtime</span>
+          <div class="choice-row" role="radiogroup" aria-label="Localization runtime">
+            <label class="choice">
+              <input type="radio" name="runtime" id="runtime-local" value="local" checked />
+              <span>Local (This PC)</span>
+            </label>
+            <label class="choice">
+              <input type="radio" name="runtime" id="runtime-edge" value="edge" />
+              <span>Edge (Jetson Nano)</span>
+            </label>
+          </div>
+          <div id="runtime-hint" class="form-hint">Runs localization server on this machine.</div>
+        </div>
+        <div class="form-row">
+          <label for="loc-port">Localization Port</label>
+          <input id="loc-port" type="number" value="5555" />
+        </div>
+        <div class="form-row">
+          <label for="web-rate">Web Rate (Hz)</label>
+          <input id="web-rate" type="number" value="6" step="1" />
+        </div>
+        <div class="advanced-panel is-open">
+          <div class="form-row">
+            <span class="form-label">Preview Mode</span>
+            <div class="choice-row" role="radiogroup" aria-label="Preview mode">
+              <label class="choice">
+                <input type="radio" name="preview-mode" id="preview-fs" value="fullscreen" checked />
+                <span>Fullscreen</span>
+              </label>
+              <label class="choice">
+                <input type="radio" name="preview-mode" id="preview-windowed" value="windowed" />
+                <span>Windowed</span>
+              </label>
+            </div>
+            <div class="form-hint">Fullscreen uses the whole display. Windowed keeps a resizable preview.</div>
+          </div>
+          <div class="form-row toggle">
+            <input id="no-preview" type="checkbox" />
+            <label for="no-preview">Disable Pygame preview</label>
+          </div>
+        </div>
+        <div class="btn-row">
+          <button id="start-btn" class="btn primary" aria-busy="false">
+            <span class="btn-label">Start</span>
+            <span class="btn-spinner" aria-hidden="true"></span>
+          </button>
+          <button id="stop-btn" class="btn">Stop</button>
+        </div>
+        <div class="carla-row">
+          <button id="carla-btn" class="btn ghost" aria-busy="false">
+            <span class="btn-label">Launch CARLA</span>
+            <span class="btn-spinner" aria-hidden="true"></span>
+          </button>
+          <button id="carla-stop-btn" class="btn ghost is-hidden" aria-busy="false">
+            <span class="btn-label">Stop CARLA</span>
+            <span class="btn-spinner" aria-hidden="true"></span>
+          </button>
+        </div>
+        <div class="note">
+          Use W, A, S, D to move; L to localize; Q to quit. Results appear here.
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="carla-modal" class="modal" aria-hidden="true" role="dialog" aria-labelledby="carla-modal-title">
+    <div class="modal-backdrop" data-modal-close="true"></div>
+    <div class="modal-card" role="document">
+      <div class="modal-header">
+        <h3 id="carla-modal-title">Launch CARLA Simulator</h3>
+        <button class="icon-btn" type="button" data-modal-close="true" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-row">
+          <label for="carla-exe">CARLA Executable</label>
+          <input id="carla-exe" type="file" accept=".exe,.sh" />
+          <input id="carla-exe-text" placeholder="/mnt/c/CARLA/CarlaUE4.exe" />
+          <div id="carla-exe-path" class="file-path">Selected file path will appear here.</div>
+        </div>
+        <div class="form-row">
+          <label for="carla-args">CARLA Extra Args (optional)</label>
+          <input id="carla-args" placeholder="-RenderOffScreen" />
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" type="button" data-modal-close="true">Cancel</button>
+        <button id="carla-launch-confirm" class="btn primary" type="button">Launch</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="carla-stop-modal" class="modal" aria-hidden="true" role="dialog" aria-labelledby="carla-stop-title">
+    <div class="modal-backdrop" data-modal-close="true"></div>
+    <div class="modal-card" role="document">
+      <div class="modal-header">
+        <h3 id="carla-stop-title">Stop CARLA Simulator</h3>
+        <button class="icon-btn" type="button" data-modal-close="true" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        CARLA is currently running. Do you want to stop it?
+      </div>
+      <div class="modal-actions">
+        <button class="btn" type="button" data-modal-close="true">Cancel</button>
+        <button id="carla-stop-confirm" class="btn primary" type="button">Stop CARLA</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="stop-modal" class="modal" aria-hidden="true" role="dialog" aria-labelledby="stop-modal-title">
+    <div class="modal-backdrop" data-modal-close="true"></div>
+    <div class="modal-card modal-card--alert" role="document">
+      <div class="modal-header">
+        <h3 id="stop-modal-title">Stop All Services</h3>
+        <button class="icon-btn" type="button" data-modal-close="true" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-alert">
+          <div class="modal-alert-icon">!</div>
+          <div>
+            <div class="modal-alert-title">This will stop simulator.</div>
+            <div class="modal-alert-text">Active sessions will be terminated, and the preview window will close.</div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" type="button" data-modal-close="true">Cancel</button>
+        <button id="stop-confirm" class="btn primary" type="button">Stop Everything</button>
+      </div>
+    </div>
+  </div>
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

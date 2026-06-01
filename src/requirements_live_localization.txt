@@ -1,0 +1,28 @@
+# Python 3.6-compatible runtime dependencies for carla_live_localization.py.
+#
+# Install inside the same environment used to run CARLA:
+#   pip install -r requirements_live_localization.txt
+#
+# Note: current latest HLoc / PyCOLMAP / LightGlue stacks generally target
+# newer Python versions. These pins are intentionally conservative for a
+# CARLA Python 3.6 environment.
+
+numpy<1.20
+h5py==2.10.0
+scipy<1.6
+tqdm<4.65
+pyyaml<6
+opencv-python==4.5.5.64
+Pillow<9
+
+# PyTorch last-generation versions commonly used with Python 3.6.
+# If your CUDA version needs a specific wheel, install torch manually from
+# the matching PyTorch wheel index, then re-run this file with --no-deps if needed.
+torch==1.10.2
+torchvision==0.11.2
+
+# Visual localization stack.
+# If pycolmap has no wheel for your platform/Python, it may need to be built
+# from source or run in a newer Python environment.
+pycolmap
+hloc

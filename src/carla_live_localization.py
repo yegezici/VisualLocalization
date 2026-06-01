@@ -274,6 +274,7 @@ class LiveCarlaLocalizer:
         self.superpoint = SuperPoint(feature_conf['model']).eval().to(self.device)
         self.netvlad = NetVLAD(retrieval_conf['model']).eval().to(self.device)
         self.lightglue = LightGlue(matcher_conf['model']).eval().to(self.device)
+        self.reference_global_gpu = self.torch.from_numpy(self.reference_global).to(self.device)
 
     def _add_hloc_third_party_paths(self) -> None:
         candidates = []
@@ -348,11 +349,8 @@ class LiveCarlaLocalizer:
 
     def localize_xyz_heading(self, rgb_array: np.ndarray) -> Dict[str, object]:
         with self.inference_lock:
-            try:
-                return self._localize_xyz_heading_impl(rgb_array)
-            finally:
-                if self.device.type == 'cuda':
-                    self.torch.cuda.empty_cache()
+            return self._localize_xyz_heading_impl(rgb_array)
+
 
     def _localize_xyz_heading_impl(self, rgb_array: np.ndarray) -> Dict[str, object]:
         with self.torch.inference_mode():
@@ -406,7 +404,9 @@ class LiveCarlaLocalizer:
         return pred
 
     def _retrieve(self, query_global: np.ndarray) -> List[str]:
-        sims = self.reference_global @ query_global.astype(np.float32)
+        with self.torch.inference_mode():
+            q_gpu = self.torch.from_numpy(query_global.astype(np.float32)).to(self.device)
+            sims = (self.reference_global_gpu @ q_gpu).cpu().numpy()
         order = np.argsort(-sims)[:self.num_loc]
         return [self.reference_global_names[int(i)] for i in order]
 

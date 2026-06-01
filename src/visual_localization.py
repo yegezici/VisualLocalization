@@ -20,7 +20,7 @@ import urllib.request
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
-
+from concurrent.futures import ThreadPoolExecutor
 
 try:
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -544,6 +544,10 @@ def post_web_telemetry(url: str, payload: Dict[str, object], timeout: float) -> 
     except Exception:
         return
 
+_telem_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='web-telemetry')
+
+def post_web_telemetry_async(url: str, payload: Dict[str, object], timeout: float) -> None:
+    _telem_executor.submit(post_web_telemetry, url, payload, timeout)
 
 def make_simple_colmap_pose_record(
     world: carla.World,
@@ -694,7 +698,7 @@ def main() -> None:
                 localization_running[0] = True
 
             if web_url is not None:
-                post_web_telemetry(web_url, {
+                post_web_telemetry_async(web_url, {
                     'type': 'localization_started',
                     'timestamp': float(time.time()),
                 }, args.web_timeout)
@@ -810,7 +814,7 @@ def main() -> None:
             if web_url is not None and web_gt_interval is not None:
                 now = time.monotonic()
                 if now - last_gt_sent >= web_gt_interval:
-                    post_web_telemetry(web_url, {
+                    post_web_telemetry_async(web_url, {
                         'type': 'gt',
                         'lat': float(car_lat),
                         'lon': float(car_lon),
@@ -825,7 +829,7 @@ def main() -> None:
                 est_lon, est_lat = carla_xy_to_lonlat(world_map, loc['est_x'], loc['est_y'], 0.0)
                 gt_lon, gt_lat = carla_xy_to_lonlat(world_map, loc['gt_x'], loc['gt_y'], 0.0)
                 if web_url is not None:
-                    post_web_telemetry(web_url, {
+                    post_web_telemetry_async(web_url, {
                         'type': 'localization',
                         'est_lat': float(est_lat),
                         'est_lon': float(est_lon),

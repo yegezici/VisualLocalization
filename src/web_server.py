@@ -341,10 +341,13 @@ async def start_processes(payload: Dict[str, Any]) -> JSONResponse:
 async def launch_carla(payload: Dict[str, Any]) -> JSONResponse:
     if state.carla_sim is not None and state.carla_sim.poll() is None:
         return JSONResponse({'ok': True, 'already_running': True})
+    if state.carla_sim is not None and state.carla_sim.poll() is not None:
+        state.carla_sim = None
 
     if is_tcp_port_open('127.0.0.1', 2000):
-        logger.warning('CARLA RPC port 2000 already in use; skipping launch.')
-        return JSONResponse({'ok': False, 'error': 'CARLA RPC port 2000 is already in use.'})
+        logger.info('CARLA RPC port 2000 is already in use; treating CARLA as already running.')
+        terminate_stale_script_process(ROOT_DIR / 'carla_examples' / 'generate_traffic.py')
+        return JSONResponse({'ok': True, 'already_running': True, 'external': True})
 
     exe_path = str(payload.get('carla_exe', '')).strip()
     exe_path = normalize_windows_path_for_wsl(exe_path)

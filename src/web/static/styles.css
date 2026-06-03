@@ -152,6 +152,113 @@ body {
 .map {
   height: 100%;
   min-height: 640px;
+  transition: filter 0.18s ease, transform 0.18s ease;
+}
+
+.map-panel.is-localizing .map {
+  filter: saturate(0.75) contrast(1.08) brightness(0.9);
+}
+
+.localization-started-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 900;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.localization-started-overlay.is-active {
+  animation: snapshot-hold 1.4s ease-out forwards;
+}
+
+.localization-started-overlay.is-active::before,
+.localization-started-overlay.is-active::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+
+.localization-started-overlay.is-active::before {
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+    rgba(5, 10, 16, 0.18);
+  background-size: 18px 18px, 18px 18px, auto;
+  animation: scan-freeze 1.4s ease-out forwards;
+}
+
+.localization-started-overlay.is-active::after {
+  border: 2px solid rgba(255, 255, 255, 0.75);
+  box-shadow:
+    inset 0 0 0 999px rgba(255, 255, 255, 0.02),
+    inset 0 0 60px rgba(255, 255, 255, 0.16);
+  animation: snapshot-frame 1.4s ease-out forwards;
+}
+
+.camera-flash {
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  opacity: 0;
+}
+
+.localization-started-overlay.is-active .camera-flash {
+  animation: camera-flash 0.5s ease-out forwards;
+}
+
+.snapshot-label {
+  position: relative;
+  z-index: 1;
+  padding: 14px 24px;
+  border: 1px solid rgba(56, 189, 248, 0.65);
+  border-radius: 10px;
+  background: rgba(7, 13, 20, 0.78);
+  color: var(--text);
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  box-shadow: 0 18px 40px rgba(2, 8, 16, 0.55), 0 0 28px rgba(56, 189, 248, 0.3);
+  transform: translateY(8px) scale(0.96);
+}
+
+.localization-started-overlay.is-active .snapshot-label {
+  animation: snapshot-label-in 1.2s ease-out forwards;
+}
+
+@keyframes camera-flash {
+  0% { opacity: 0; }
+  12% { opacity: 0.95; }
+  100% { opacity: 0; }
+}
+
+@keyframes snapshot-hold {
+  0% { opacity: 0; }
+  10% { opacity: 1; }
+  78% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@keyframes scan-freeze {
+  0% { opacity: 0; transform: scale(1.02); }
+  24% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1); }
+}
+
+@keyframes snapshot-frame {
+  0% { opacity: 0; transform: scale(0.98); }
+  18% { opacity: 1; transform: scale(1); }
+  78% { opacity: 1; }
+  100% { opacity: 0; transform: scale(1.01); }
+}
+
+@keyframes snapshot-label-in {
+  0% { opacity: 0; transform: translateY(8px) scale(0.96); }
+  18% { opacity: 1; transform: translateY(0) scale(1); }
+  78% { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(-6px) scale(1.02); }
 }
 
 .legend {
@@ -285,6 +392,66 @@ body {
   border-radius: 50%;
   display: inline-block;
   margin-right: 6px;
+}
+
+.localization-loader {
+  display: none;
+  grid-template-columns: 42px 1fr;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 12px;
+  border-radius: 10px;
+  background: rgba(56, 189, 248, 0.08);
+  border: 1px solid rgba(56, 189, 248, 0.32);
+}
+
+.localization-loader.is-active {
+  display: grid;
+}
+
+.localization-spinner {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 3px solid rgba(56, 189, 248, 0.18);
+  border-top-color: var(--accent);
+  border-right-color: rgba(63, 209, 155, 0.9);
+  animation: localization-spin 0.85s linear infinite;
+}
+
+.localization-load-content {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.localization-load-step {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.localization-progress-track {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(7, 13, 20, 0.8);
+  border: 1px solid rgba(110, 130, 150, 0.2);
+}
+
+.localization-progress-bar {
+  height: 100%;
+  width: 12%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), #3fd19b);
+  box-shadow: 0 0 16px rgba(56, 189, 248, 0.45);
+  transition: width 0.35s ease;
+}
+
+@keyframes localization-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .legend-dot.gt {
@@ -766,6 +933,13 @@ body {
 
   .choice-row {
     grid-template-columns: 1fr;
+  }
+
+  .snapshot-label {
+    max-width: calc(100% - 28px);
+    font-size: 20px;
+    white-space: normal;
+    text-align: center;
   }
 }
 /* Ekranın ortasına fırlayacak dev yazı efekti */

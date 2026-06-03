@@ -36,6 +36,10 @@
         <section class="panel map-panel" id="map-panel-container">
           <div class="pulse-ring" id="pulse-ring"></div>
           <div id="giant-overlay" class="giant-overlay">[ ESTIMATE ACQUIRED ]</div>
+          <div id="localization-started-overlay" class="localization-started-overlay">
+            <div class="camera-flash"></div>
+            <div class="snapshot-label">Localization Started</div>
+          </div>
           <div id="map" class="map"></div>
           <div class="legend">
             <span class="legend-item"><span class="legend-dot gt"></span> Ground Truth</span>
@@ -46,6 +50,15 @@
         <section class="panel results-panel">
           <div class="map-info">
             <div class="info-title">Latest Localization</div>
+            <div id="localization-loader" class="localization-loader" aria-live="polite">
+              <div class="localization-spinner" aria-hidden="true"></div>
+              <div class="localization-load-content">
+                <div id="localization-load-step" class="localization-load-step">Waiting for localization...</div>
+                <div class="localization-progress-track">
+                  <div id="localization-progress-bar" class="localization-progress-bar"></div>
+                </div>
+              </div>
+            </div>
             <div class="info-grid">
               <div>
                 <div class="info-label">Estimated (lat, lon)</div>

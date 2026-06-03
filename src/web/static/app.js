@@ -55,6 +55,11 @@ const infoGt = document.getElementById('info-gt');
 const infoError = document.getElementById('info-error');
 const historyList = document.getElementById('history-list');
 const pulseRing = document.getElementById('pulse-ring');
+const mapPanelEl = document.getElementById('map-panel-container');
+const localizationStartedOverlay = document.getElementById('localization-started-overlay');
+const localizationLoader = document.getElementById('localization-loader');
+const localizationLoadStep = document.getElementById('localization-load-step');
+const localizationProgressBar = document.getElementById('localization-progress-bar');
 const toastStack = document.getElementById('toast-stack');
 const startBtnEl = document.getElementById('start-btn');
 const stopBtnEl = document.getElementById('stop-btn');
@@ -89,6 +94,16 @@ let carlaLoadingAt = null;
 let carlaMinTimeoutId = null;
 const MIN_CARLA_VIS_MS = 1000;
 let edgeHostCache = '';
+let localizationStepIndex = 0;
+let localizationStepTimer = null;
+const localizationSteps = [
+  'Capturing map snapshot...',
+  'Extracting global descriptor...',
+  'Retrieving candidate images...',
+  'Extracting local features...',
+  'Matching local features...',
+  'Solving camera pose...'
+];
 
 function getRuntimeMode() {
   if (runtimeEdgeEl && runtimeEdgeEl.checked) {
@@ -202,6 +217,78 @@ function updateLocalizationInfo(payload) {
       historyList.removeChild(historyList.lastChild);
     }
   }
+}
+
+function setLocalizationStep(index) {
+  if (!localizationLoadStep || !localizationProgressBar) {
+    return;
+  }
+  localizationStepIndex = index % localizationSteps.length;
+  localizationLoadStep.textContent = localizationSteps[localizationStepIndex];
+  const progress = Math.min(92, 14 + localizationStepIndex * 15);
+  localizationProgressBar.style.width = `${progress}%`;
+}
+
+function beginLocalizationLoading() {
+  if (localizationStepTimer) {
+    clearInterval(localizationStepTimer);
+    localizationStepTimer = null;
+  }
+  if (localizationLoader) {
+    localizationLoader.classList.add('is-active');
+  }
+  setLocalizationStep(0);
+  localizationStepTimer = setInterval(() => {
+    setLocalizationStep(localizationStepIndex + 1);
+  }, 1100);
+}
+
+function finishLocalizationLoading() {
+  if (localizationStepTimer) {
+    clearInterval(localizationStepTimer);
+    localizationStepTimer = null;
+  }
+  if (localizationLoadStep) {
+    localizationLoadStep.textContent = 'Localization complete';
+  }
+  if (localizationProgressBar) {
+    localizationProgressBar.style.width = '100%';
+  }
+  setTimeout(() => {
+    if (localizationLoader) {
+      localizationLoader.classList.remove('is-active');
+    }
+    if (localizationProgressBar) {
+      localizationProgressBar.style.width = '12%';
+    }
+  }, 700);
+}
+
+function cancelLocalizationLoading() {
+  if (localizationStepTimer) {
+    clearInterval(localizationStepTimer);
+    localizationStepTimer = null;
+  }
+  if (localizationLoader) {
+    localizationLoader.classList.remove('is-active');
+  }
+  if (localizationProgressBar) {
+    localizationProgressBar.style.width = '12%';
+  }
+}
+
+function triggerLocalizationStartedEffect() {
+  if (mapPanelEl) {
+    mapPanelEl.classList.add('is-localizing');
+    setTimeout(() => mapPanelEl.classList.remove('is-localizing'), 1400);
+  }
+  if (!localizationStartedOverlay) {
+    return;
+  }
+  localizationStartedOverlay.classList.remove('is-active');
+  void localizationStartedOverlay.offsetWidth;
+  localizationStartedOverlay.classList.add('is-active');
+  setTimeout(() => localizationStartedOverlay.classList.remove('is-active'), 1500);
 }
 
 function setStatus(text, good) {
@@ -489,15 +576,16 @@ async function refreshStatus() {
     const data = await res.json();
     setCarlaButtonState(!!data.carla_sim_running);
     setCarlaRpcStatus(typeof data.carla_rpc_up === 'boolean' ? data.carla_rpc_up : null);
+    const carlaReady = !!data.carla_sim_running || !!data.carla_rpc_up;
     if (data.visual_localization_running) {
-      const carlaNote = data.carla_sim_running ? ' + CARLA' : '';
+      const carlaNote = carlaReady ? ' + CARLA' : '';
       setStatus(`Running${carlaNote}`, true);
       endStartLoading();
       clearStartTimeout();
     } else {
-      const carlaNote = data.carla_sim_running ? 'CARLA only' : 'Stopped';
-      setStatus(carlaNote, !!data.carla_sim_running);
-      if (!data.carla_sim_running) {
+      const carlaNote = carlaReady ? 'CARLA ready' : 'Stopped';
+      setStatus(carlaNote, carlaReady);
+      if (!carlaReady) {
         endStartLoading();
         clearStartTimeout();
       }
@@ -525,6 +613,7 @@ function connectWs() {
         updateLiveLocation(payload.lat, payload.lon);
       }
       if (payload.type === 'localization') {
+        finishLocalizationLoading();
         updateEst(payload.est_lat, payload.est_lon);
         updateLocalizationGt(payload.gt_lat, payload.gt_lon);
         addEstimateHistory(payload.est_lat, payload.est_lon);
@@ -533,6 +622,8 @@ function connectWs() {
         pulseMap();
       }
       if (payload.type === 'localization_started') {
+        triggerLocalizationStartedEffect();
+        beginLocalizationLoading();
         showToast('Localization started', 'info');
         endStartLoading();
         clearStartTimeout();
@@ -672,7 +763,7 @@ function bindControls() {
       }
       await refreshStatus();
       endCarlaLoading();
-      showToast('CARLA running', 'success');
+      showToast(res.already_running ? 'CARLA already running' : 'CARLA running', 'success');
     });
   }
 
@@ -692,6 +783,7 @@ function bindControls() {
       closeStopModal();
       await postJson('/api/stop', {});
       await refreshStatus();
+      cancelLocalizationLoading();
       clearStartTimeout();
       showToast('All services stopped', 'info');
     });

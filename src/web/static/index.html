@@ -35,11 +35,12 @@
       <div class="map-column">
         <section class="panel map-panel" id="map-panel-container">
           <div class="pulse-ring" id="pulse-ring"></div>
-          <div id="giant-overlay" class="giant-overlay">[ ESTIMATE ACQUIRED ]</div> 
+          <div id="giant-overlay" class="giant-overlay">[ ESTIMATE ACQUIRED ]</div>
           <div id="map" class="map"></div>
-          </section>
+          <div class="legend">
             <span class="legend-item"><span class="legend-dot gt"></span> Ground Truth</span>
             <span class="legend-item"><span class="legend-dot est"></span> Estimated</span>
+            <span class="legend-item"><span class="legend-dot live"></span> Live Location</span>
           </div>
         </section>
         <section class="panel results-panel">
@@ -171,7 +172,7 @@
         </div>
         <div class="form-row">
           <label for="carla-args">CARLA Extra Args (optional)</label>
-          <input id="carla-args" placeholder="-RenderOffScreen" />
+          <input id="carla-args" value="-quality-level=Low" />
         </div>
       </div>
       <div class="modal-actions">

@@ -1,861 +1,817 @@
-const statusEl = document.getElementById('status');
-const map = L.map('map').setView([40.9067, 29.1550], 17);
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&family=Space+Grotesk:wght@400;600&display=swap');
 
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  maxZoom: 19,
-  attribution: '&copy; OpenStreetMap contributors'
-}).addTo(map);
-
-const gtMarker = L.circleMarker([0, 0], {
-  radius: 7,
-  color: '#5ad37a',
-  fillColor: '#5ad37a',
-  fillOpacity: 0.9
-}).addTo(map);
-gtMarker.bindTooltip('Lat: --\nLon: --', {
-  direction: 'top',
-  offset: [0, -8],
-  opacity: 0.95,
-  className: 'gt-tooltip'
-});
-
-const estMarker = L.marker([0, 0], {
-  icon: L.divIcon({
-    className: 'est-icon',
-    html: '<div class="est-x"></div>',
-    iconSize: [22, 22]
-  })
-}).addTo(map);
-
-const estHistoryLayer = L.layerGroup().addTo(map);
-const estHistory = [];
-
-const gtTrail = L.polyline([], { color: '#5ad37a', weight: 2, opacity: 0.6 }).addTo(map);
-
-const infoEst = document.getElementById('info-est');
-const infoGt = document.getElementById('info-gt');
-const infoError = document.getElementById('info-error');
-const mapInfoEl = document.querySelector('.map-info');
-const historyList = document.getElementById('history-list');
-const pulseRing = document.getElementById('pulse-ring');
-const toastStack = document.getElementById('toast-stack');
-const startBtnEl = document.getElementById('start-btn');
-const stopBtnEl = document.getElementById('stop-btn');
-const startProgressEl = document.getElementById('start-progress');
-const carlaBtnEl = document.getElementById('carla-btn');
-const carlaStopBtnEl = document.getElementById('carla-stop-btn');
-const carlaModalEl = document.getElementById('carla-modal');
-const carlaStopModalEl = document.getElementById('carla-stop-modal');
-const stopModalEl = document.getElementById('stop-modal');
-const carlaExeInput = document.getElementById('carla-exe');
-const carlaExeTextInput = document.getElementById('carla-exe-text');
-const carlaExePathEl = document.getElementById('carla-exe-path');
-const carlaArgsInput = document.getElementById('carla-args');
-const carlaLaunchConfirm = document.getElementById('carla-launch-confirm');
-const carlaStopConfirm = document.getElementById('carla-stop-confirm');
-const stopConfirm = document.getElementById('stop-confirm');
-const runtimeLocalEl = document.getElementById('runtime-local');
-const runtimeEdgeEl = document.getElementById('runtime-edge');
-const runtimeHintEl = document.getElementById('runtime-hint');
-const locHostInput = document.getElementById('loc-host');
-const previewFsEl = document.getElementById('preview-fs');
-const previewWindowedEl = document.getElementById('preview-windowed');
-const carlaRpcEl = document.getElementById('carla-rpc');
-const mapPanelContainer = document.getElementById('map-panel-container');
-const giantOverlay = document.getElementById('giant-overlay');
-
-let lastGt = null;
-let mapInitialized = false;
-let startTimeoutId = null;
-let startLoadingAt = null;
-let startMinTimeoutId = null;
-const MIN_START_VIS_MS = 1000;
-let carlaLoadingAt = null;
-let carlaMinTimeoutId = null;
-const MIN_CARLA_VIS_MS = 1000;
-let edgeHostCache = '';
-
-function getRuntimeMode() {
-  if (runtimeEdgeEl && runtimeEdgeEl.checked) {
-    return 'edge';
-  }
-  return 'local';
+:root {
+  --bg: #0a0f14;
+  --panel: rgba(15, 22, 30, 0.88);
+  --panel-2: rgba(12, 18, 26, 0.9);
+  --accent: #38bdf8;
+  --accent-2: #ff6b57;
+  --accent-3: #f7c74a;
+  --text: #eff4f8;
+  --muted: #9db0c2;
+  --border: rgba(110, 130, 150, 0.25);
+  --shadow: 0 24px 60px rgba(2, 8, 16, 0.5);
 }
 
-function setRuntimeUi(mode) {
-  if (!locHostInput) {
-    return;
-  }
-  if (mode === 'edge') {
-    locHostInput.disabled = false;
-    if (edgeHostCache) {
-      locHostInput.value = edgeHostCache;
-    }
-    if (runtimeHintEl) {
-      runtimeHintEl.textContent = 'Runs localization on Jetson Nano. Set host to Jetson IP.';
-    }
-    return;
-  }
+* {
+  box-sizing: border-box;
+}
 
-  if (locHostInput.value && locHostInput.value !== '127.0.0.1') {
-    edgeHostCache = locHostInput.value;
+body {
+  margin: 0;
+  font-family: "Sora", "Space Grotesk", "Segoe UI", sans-serif;
+  background:
+    radial-gradient(circle at 15% 10%, rgba(56, 189, 248, 0.14), transparent 45%),
+    radial-gradient(circle at 85% 20%, rgba(247, 199, 74, 0.12), transparent 40%),
+    linear-gradient(160deg, #0a0f14, #0b1118 55%, #0d141d);
+  color: var(--text);
+}
+
+.starfield {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.55;
+}
+
+.layout {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: 18px;
+  gap: 16px;
+  position: relative;
+  z-index: 1;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  background: rgba(10, 15, 22, 0.75);
+  border-bottom: 1px solid var(--border);
+  border-radius: 16px;
+  backdrop-filter: blur(14px);
+}
+
+.start-progress {
+  height: 6px;
+  margin-top: -8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(15, 22, 30, 0.6);
+  border: 1px solid rgba(110, 130, 150, 0.25);
+  opacity: 0;
+  transform: translateY(-6px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.start-progress.is-active {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.start-progress-bar {
+  height: 100%;
+  width: 40%;
+  background: linear-gradient(90deg, rgba(56, 189, 248, 0.2), rgba(56, 189, 248, 0.9), rgba(63, 209, 155, 0.75));
+  border-radius: inherit;
+  animation: start-progress-sweep 1.2s ease-in-out infinite;
+}
+
+@keyframes start-progress-sweep {
+  0% {
+    transform: translateX(-60%);
   }
-  locHostInput.value = '127.0.0.1';
-  locHostInput.disabled = true;
-  if (runtimeHintEl) {
-    runtimeHintEl.textContent = 'Runs localization server on this machine.';
+  100% {
+    transform: translateX(220%);
   }
 }
 
-function updateGt(lat, lon) {
-  lastGt = [lat, lon];
-  gtMarker.setLatLng([lat, lon]);
-  gtMarker.setTooltipContent(`Lat: ${lat.toFixed(6)}<br>Lon: ${lon.toFixed(6)}`);
-  gtTrail.addLatLng([lat, lon]);
-  if (!mapInitialized) {
-    map.setView([lat, lon], 17);
-    mapInitialized = true;
-  } else {
-    // Keep GT at the center even if the user drags the map.
-    map.setView([lat, lon], map.getZoom(), { animate: true });
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.brand .dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: linear-gradient(140deg, var(--accent), var(--accent-3));
+  box-shadow: 0 0 18px rgba(56, 189, 248, 0.55);
+}
+
+.title {
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.subtitle {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.status {
+  font-size: 13px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(100, 130, 150, 0.35);
+  background: rgba(12, 18, 26, 0.75);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+}
+
+.main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 2.1fr 1fr;
+  gap: 20px;
+  padding: 0;
+  align-items: start;
+}
+
+.map-column {
+  display: grid;
+  gap: 16px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  overflow: hidden;
+  position: relative;
+  box-shadow: var(--shadow);
+}
+
+.map {
+  height: 100%;
+  min-height: 640px;
+}
+
+.legend {
+  position: absolute;
+  top: 12px;
+  left: 56px;
+  background: rgba(10, 16, 22, 0.85);
+  border: 1px solid rgba(120, 140, 160, 0.3);
+  padding: 8px 12px;
+  border-radius: 10px;
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  z-index: 500;
+  backdrop-filter: blur(10px);
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+}
+
+.map-info {
+  width: 100%;
+  background: rgba(10, 16, 22, 0.9);
+  border: 1px solid rgba(120, 140, 160, 0.3);
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: grid;
+  gap: 10px;
+  box-shadow: 0 16px 28px rgba(2, 8, 16, 0.45);
+}
+
+.map-info.blink {
+  animation: localization-blink 1s ease-in-out 2;
+  box-shadow:
+    0 16px 28px rgba(2, 8, 16, 0.45),
+    0 0 0 2px rgba(90, 211, 122, 0.4),
+    0 0 22px rgba(90, 211, 122, 0.35);
+}
+
+@keyframes localization-blink {
+  0%,
+  100% {
+    transform: scale(1);
+    background: rgba(10, 16, 22, 0.9);
+  }
+  50% {
+    transform: scale(1.01);
+    background: rgba(24, 40, 28, 0.95);
   }
 }
 
-function updateEst(lat, lon) {
-  estMarker.setLatLng([lat, lon]);
+.history-panel {
+  width: 100%;
+  background: rgba(10, 16, 22, 0.9);
+  border: 1px solid rgba(120, 140, 160, 0.3);
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: grid;
+  gap: 8px;
+  box-shadow: 0 16px 28px rgba(2, 8, 16, 0.45);
 }
 
-function addEstimateHistory(lat, lon) {
-  const marker = L.marker([lat, lon], {
-    icon: L.divIcon({
-      className: 'est-icon',
-      html: '<div class="est-x"></div>',
-      iconSize: [18, 18]
-    })
-  });
-  marker.addTo(estHistoryLayer);
-  estHistory.push(marker);
-  if (estHistory.length > 5) {
-    const oldest = estHistory.shift();
-    if (oldest) {
-      estHistoryLayer.removeLayer(oldest);
-    }
-  }
+.results-panel {
+  padding: 12px;
+  display: grid;
+  gap: 12px;
 }
 
-function haversineMeters(lat1, lon1, lat2, lon2) {
-  const toRad = (value) => (value * Math.PI) / 180;
-  const r = 6371000;
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
-    Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return r * c;
+.history-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
-function updateLocalizationInfo(payload) {
-  const estLat = payload.est_lat;
-  const estLon = payload.est_lon;
-  const gtLat = payload.gt_lat;
-  const gtLon = payload.gt_lon;
-  if (infoEst) {
-    infoEst.textContent = `${estLat.toFixed(6)}, ${estLon.toFixed(6)}`;
-  }
-  if (infoGt) {
-    infoGt.textContent = `${gtLat.toFixed(6)}, ${gtLon.toFixed(6)}`;
-  }
-  if (infoError) {
-    const errorMeters = haversineMeters(estLat, estLon, gtLat, gtLon);
-    infoError.textContent = `${errorMeters.toFixed(4)} m`;
-  }
-
-  if (historyList) {
-    const errorMeters = haversineMeters(estLat, estLon, gtLat, gtLon);
-    const row = document.createElement('div');
-    row.className = 'history-item';
-    row.innerHTML = `<strong>${errorMeters.toFixed(4)} m</strong><span>${estLat.toFixed(5)}, ${estLon.toFixed(5)}</span>`;
-    historyList.prepend(row);
-    while (historyList.children.length > 5) {
-      historyList.removeChild(historyList.lastChild);
-    }
-  }
+.history-list {
+  display: grid;
+  gap: 6px;
+  font-size: 20px;
+  color: var(--muted);
 }
 
-function flashLatestLocalization() {
-  if (!mapInfoEl) {
-    return;
-  }
-  mapInfoEl.classList.remove('blink');
-  void mapInfoEl.offsetWidth;
-  mapInfoEl.classList.add('blink');
+.history-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
 }
 
-function setStatus(text, good) {
-  statusEl.textContent = text;
-  statusEl.style.borderColor = good ? '#2f5244' : '#3a2430';
-  statusEl.style.background = good ? 'rgba(44, 120, 80, 0.25)' : 'rgba(120, 40, 60, 0.25)';
+.history-item strong {
+  color: var(--text);
+  font-weight: 600;
 }
 
-function setCarlaRpcStatus(isUp) {
-  if (!carlaRpcEl) {
-    return;
-  }
-  if (isUp === null) {
-    carlaRpcEl.textContent = 'Unknown';
-    carlaRpcEl.className = 'rpc-status is-unknown';
-    return;
-  }
-  carlaRpcEl.textContent = isUp ? 'Listening' : 'Down';
-  carlaRpcEl.className = isUp ? 'rpc-status is-up' : 'rpc-status is-down';
+.info-title {
+  font-size: 16px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
 }
 
-function setStartLoading(active) {
-  if (!startBtnEl) {
-    return;
-  }
-  const label = startBtnEl.querySelector('.btn-label');
-  if (active) {
-    startLoadingAt = Date.now();
-    if (startMinTimeoutId) {
-      clearTimeout(startMinTimeoutId);
-      startMinTimeoutId = null;
-    }
-    if (label) {
-      startBtnEl.dataset.originalLabel = label.textContent || 'Start';
-      label.textContent = 'Starting...';
-    }
-    if (startProgressEl) {
-      startProgressEl.classList.add('is-active');
-    }
-    if (stopBtnEl) {
-      stopBtnEl.disabled = false;
-    }
-  } else if (label) {
-    const original = startBtnEl.dataset.originalLabel || 'Start';
-    label.textContent = original;
-  }
-  startBtnEl.classList.toggle('is-loading', active);
-  startBtnEl.disabled = active;
-  startBtnEl.setAttribute('aria-busy', active ? 'true' : 'false');
-  if (!active) {
-    if (startProgressEl) {
-      startProgressEl.classList.remove('is-active');
-    }
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.info-label {
+  font-size: 15px;
+  color: var(--muted);
+}
+
+.info-value {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+@media (max-width: 980px) {
+  .info-grid {
+    grid-template-columns: 1fr;
   }
 }
 
-function endStartLoading() {
-  if (!startBtnEl || !startBtnEl.classList.contains('is-loading')) {
-    setStartLoading(false);
-    return;
-  }
-  const elapsed = Date.now() - (startLoadingAt || 0);
-  if (elapsed >= MIN_START_VIS_MS) {
-    setStartLoading(false);
-    return;
-  }
-  const remaining = MIN_START_VIS_MS - elapsed;
-  if (startMinTimeoutId) {
-    clearTimeout(startMinTimeoutId);
-  }
-  startMinTimeoutId = setTimeout(() => {
-    startMinTimeoutId = null;
-    setStartLoading(false);
-  }, remaining);
+.legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 6px;
 }
 
-function clearStartTimeout() {
-  if (startTimeoutId) {
-    clearTimeout(startTimeoutId);
-    startTimeoutId = null;
-  }
+.legend-dot.gt {
+  background: var(--accent-3);
+  border: 1px solid #7a6500;
+  border-radius: 2px;
 }
 
-function setCarlaLoading(active) {
-  if (!carlaBtnEl && !carlaStopBtnEl) {
-    return;
-  }
-  const label = carlaBtnEl ? carlaBtnEl.querySelector('.btn-label') : null;
-  const stopLabel = carlaStopBtnEl ? carlaStopBtnEl.querySelector('.btn-label') : null;
-  if (active) {
-    carlaLoadingAt = Date.now();
-    if (carlaMinTimeoutId) {
-      clearTimeout(carlaMinTimeoutId);
-      carlaMinTimeoutId = null;
-    }
-  }
-  if (carlaBtnEl) {
-    carlaBtnEl.classList.toggle('is-loading', active);
-    carlaBtnEl.setAttribute('aria-busy', active ? 'true' : 'false');
-    carlaBtnEl.disabled = active;
-  }
-  if (carlaStopBtnEl) {
-    carlaStopBtnEl.classList.toggle('is-loading', active);
-    carlaStopBtnEl.setAttribute('aria-busy', active ? 'true' : 'false');
-    carlaStopBtnEl.disabled = active;
-  }
-  if (label && !active) {
-    const original = carlaBtnEl.dataset.originalLabel || label.textContent;
-    label.textContent = original;
-  }
-  if (stopLabel && !active) {
-    const original = carlaStopBtnEl.dataset.originalLabel || stopLabel.textContent;
-    stopLabel.textContent = original;
-  }
+.legend-dot.est {
+  background: var(--accent-2);
 }
 
-function endCarlaLoading() {
-  if (!carlaBtnEl || !carlaBtnEl.classList.contains('is-loading')) {
-    setCarlaLoading(false);
-    return;
-  }
-  const elapsed = Date.now() - (carlaLoadingAt || 0);
-  if (elapsed >= MIN_CARLA_VIS_MS) {
-    setCarlaLoading(false);
-    return;
-  }
-  const remaining = MIN_CARLA_VIS_MS - elapsed;
-  if (carlaMinTimeoutId) {
-    clearTimeout(carlaMinTimeoutId);
-  }
-  carlaMinTimeoutId = setTimeout(() => {
-    carlaMinTimeoutId = null;
-    setCarlaLoading(false);
-  }, remaining);
+.legend-dot.live {
+  background: #5ad37a;
 }
 
-function setCarlaButtonState(isRunning) {
-  if (!carlaBtnEl || !carlaStopBtnEl) {
-    return;
-  }
-  carlaBtnEl.classList.toggle('is-hidden', isRunning);
-  carlaStopBtnEl.classList.toggle('is-hidden', !isRunning);
+.control-panel {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
-function openCarlaModal() {
-  if (!carlaModalEl) {
-    return;
-  }
-  carlaModalEl.classList.add('is-open');
-  carlaModalEl.setAttribute('aria-hidden', 'false');
+.advanced-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
-function closeCarlaModal() {
-  if (!carlaModalEl) {
-    return;
-  }
-  carlaModalEl.classList.remove('is-open');
-  carlaModalEl.setAttribute('aria-hidden', 'true');
+.control-panel h2 {
+  margin: 0 0 6px 0;
+  font-size: 22px;
+  font-weight: 700;
 }
 
-function openCarlaStopModal() {
-  if (!carlaStopModalEl) {
-    return;
-  }
-  carlaStopModalEl.classList.add('is-open');
-  carlaStopModalEl.setAttribute('aria-hidden', 'false');
+.form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 14px;
 }
 
-function openStopModal() {
-  if (!stopModalEl) {
-    return;
-  }
-  stopModalEl.classList.add('is-open');
-  stopModalEl.setAttribute('aria-hidden', 'false');
+.form-row label {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 13px;
 }
 
-function closeStopModal() {
-  if (!stopModalEl) {
-    return;
-  }
-  stopModalEl.classList.remove('is-open');
-  stopModalEl.setAttribute('aria-hidden', 'true');
+.form-row .form-label {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 13px;
 }
 
-function closeCarlaStopModal() {
-  if (!carlaStopModalEl) {
-    return;
-  }
-  carlaStopModalEl.classList.remove('is-open');
-  carlaStopModalEl.setAttribute('aria-hidden', 'true');
+.form-row input {
+  background: rgba(10, 16, 24, 0.85);
+  border: 1px solid rgba(110, 130, 150, 0.35);
+  color: var(--text);
+  font-size: 15px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
-function isFakePath(pathValue) {
-  return /fakepath/i.test(pathValue || '');
+.choice-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
 }
 
-function getCarlaExePath() {
-  if (carlaExeTextInput && carlaExeTextInput.value.trim()) {
-    return carlaExeTextInput.value.trim();
-  }
-  if (!carlaExeInput) {
-    return '';
-  }
-  if (carlaExeInput.files && carlaExeInput.files[0]) {
-    const file = carlaExeInput.files[0];
-    const candidate = file.path || carlaExeInput.value || '';
-    if (candidate && !isFakePath(candidate)) {
-      return candidate;
-    }
-    return file.name || '';
-  }
-  const fallback = carlaExeInput.value || '';
-  return isFakePath(fallback) ? '' : fallback;
+.choice {
+  display: flex;
+  font-size: 15px;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(10, 16, 24, 0.65);
+  border: 1px solid rgba(110, 130, 150, 0.28);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
-function updateCarlaExePathLabel() {
-  if (!carlaExePathEl) {
-    return;
-  }
-  const textValue = carlaExeTextInput ? carlaExeTextInput.value.trim() : '';
-  if (textValue) {
-    carlaExePathEl.textContent = textValue;
-    return;
-  }
-  const file = carlaExeInput && carlaExeInput.files && carlaExeInput.files[0];
-  if (file) {
-    const displayPath = file.path || file.name || carlaExeInput.value;
-    if (isFakePath(displayPath)) {
-      carlaExePathEl.textContent = 'Browser hides the full path. Using filename; paste full path if needed.';
-    } else {
-      carlaExePathEl.textContent = displayPath || 'No file selected';
-    }
-    return;
-  }
-  const rawValue = (carlaExeInput && carlaExeInput.value) || '';
-  carlaExePathEl.textContent = isFakePath(rawValue)
-    ? 'Browser hides the full path. Paste the path above.'
-    : (rawValue || 'No file selected');
+.choice input {
+  accent-color: var(--accent);
 }
 
-function scheduleStartTimeout() {
-  clearStartTimeout();
-  startTimeoutId = setTimeout(() => {
-    if (startBtnEl && startBtnEl.classList.contains('is-loading')) {
-      showToast('Start is taking longer than expected...', 'info');
-    }
-  }, 12000);
+.choice:hover {
+  border-color: rgba(56, 189, 248, 0.6);
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.2);
 }
 
-function showToast(message, tone = 'info') {
-  if (!toastStack) {
-    return;
-  }
-  const toast = document.createElement('div');
-  toast.className = `toast ${tone}`;
-  toast.textContent = message;
-  toastStack.appendChild(toast);
-  setTimeout(() => {
-    toast.remove();
-  }, 2600);
+.rpc-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(120, 140, 160, 0.4);
+  background: rgba(10, 16, 22, 0.6);
+  width: fit-content;
 }
 
-function pulseMap() {
-  if (!pulseRing) {
-    return;
-  }
-  pulseRing.classList.remove('active');
-  void pulseRing.offsetWidth;
-  pulseRing.classList.add('active');
-  setTimeout(() => pulseRing.classList.remove('active'), 900);
+.rpc-status::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #8ca0b0;
+  box-shadow: 0 0 8px rgba(140, 160, 176, 0.55);
 }
 
-async function postJson(url, data) {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data)
-  });
-  return res.json();
+.rpc-status.is-up {
+  border-color: rgba(77, 196, 134, 0.6);
+  background: rgba(44, 120, 80, 0.2);
 }
 
-async function refreshStatus() {
-  try {
-    const res = await fetch('/api/status');
-    const data = await res.json();
-    setCarlaButtonState(!!data.carla_sim_running);
-    setCarlaRpcStatus(typeof data.carla_rpc_up === 'boolean' ? data.carla_rpc_up : null);
-    if (data.visual_localization_running) {
-      const carlaNote = data.carla_sim_running ? ' + CARLA' : '';
-      setStatus(`Running${carlaNote}`, true);
-      endStartLoading();
-      clearStartTimeout();
-    } else {
-      const carlaNote = data.carla_sim_running ? 'CARLA only' : 'Stopped';
-      setStatus(carlaNote, !!data.carla_sim_running);
-      if (!data.carla_sim_running) {
-        endStartLoading();
-        clearStartTimeout();
-      }
-    }
-  } catch (err) {
-    setStatus('Disconnected', false);
-    setCarlaRpcStatus(null);
-    endStartLoading();
-    clearStartTimeout();
+.rpc-status.is-up::before {
+  background: #4dc486;
+  box-shadow: 0 0 8px rgba(77, 196, 134, 0.7);
+}
+
+.rpc-status.is-down {
+  border-color: rgba(255, 92, 92, 0.5);
+  background: rgba(120, 40, 60, 0.2);
+}
+
+.rpc-status.is-down::before {
+  background: #ff5c5c;
+  box-shadow: 0 0 8px rgba(255, 92, 92, 0.7);
+}
+
+.form-hint {
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.form-row input:focus {
+  outline: none;
+  border-color: rgba(56, 189, 248, 0.7);
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.18);
+}
+
+.form-row.toggle {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+
+.divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(110, 130, 150, 0.4), transparent);
+  margin: 6px 0 2px;
+}
+
+.btn-row {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.btn {
+  flex: 1;
+  padding: 11px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(110, 130, 150, 0.35);
+  background: rgba(12, 18, 26, 0.9);
+  color: var(--text);
+  font-size: 15px;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+  border-color: rgba(56, 189, 248, 0.5);
+}
+
+.btn.primary {
+  background: linear-gradient(120deg, #38bdf8, #3fd19b);
+  color: #071018;
+  border: none;
+  box-shadow: 0 10px 24px rgba(56, 189, 248, 0.25);
+}
+
+.btn .btn-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid rgba(7, 16, 24, 0.25);
+  border-top-color: rgba(7, 16, 24, 0.85);
+  animation: btn-spin 0.8s linear infinite;
+  display: none;
+}
+
+.btn.is-loading {
+  cursor: progress;
+  transform: translateY(0);
+  box-shadow: 0 8px 20px rgba(56, 189, 248, 0.2);
+}
+
+.btn.is-loading .btn-spinner {
+  display: inline-block;
+}
+
+.btn.is-loading .btn-label {
+  opacity: 0.85;
+}
+
+.btn:disabled {
+  opacity: 0.8;
+  cursor: not-allowed;
+}
+
+@keyframes btn-spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 
-function connectWs() {
-  const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-  const ws = new WebSocket(`${protocol}://${location.host}/ws`);
-
-  ws.onopen = () => {
-    setStatus('Connected', true);
-  };
-
-  ws.onmessage = (evt) => {
-    try {
-      const payload = JSON.parse(evt.data);
-      if (payload.type === 'gt') {
-        updateGt(payload.lat, payload.lon);
-      }
-      if (payload.type === 'localization') {
-        updateGt(payload.gt_lat, payload.gt_lon);
-        updateEst(payload.est_lat, payload.est_lon);
-        addEstimateHistory(payload.est_lat, payload.est_lon);
-        updateLocalizationInfo(payload);
-        
-        // Klasik ufak blink efekti
-        flashLatestLocalization();
-        showToast('Localization complete', 'success');
-        pulseMap();
-
-        // --- YENİ EKLENEN DEV GÖRSEL EFEKTLER ---
-        if (giantOverlay && mapPanelContainer) {
-          // Önce varsa eski class'ları temizle ki animasyon baştan başlasın
-          giantOverlay.classList.remove('pop');
-          mapPanelContainer.classList.remove('flash-border');
-          
-          // Tarayıcının reflow yapması için ufak bir trick
-          void giantOverlay.offsetWidth; 
-          
-          // Animasyonları tetikle
-          giantOverlay.classList.add('pop');
-          mapPanelContainer.classList.add('flash-border');
-        }
-        // ----------------------------------------
-      }
-      if (payload.type === 'localization_started') {
-        flashLatestLocalization();
-        showToast('Localization started', 'info');
-        endStartLoading();
-        clearStartTimeout();
-      }
-    } catch (err) {
-      console.warn('Bad payload', err);
-    }
-  };
-
-  ws.onclose = () => {
-    setStatus('Disconnected', false);
-    setTimeout(connectWs, 1200);
-  };
+.btn.ghost {
+  width: 100%;
+  background: rgba(12, 18, 26, 0.7);
+  border: 1px dashed rgba(120, 140, 160, 0.45);
+  color: var(--text);
 }
 
-function bindControls() {
-  const startBtn = document.getElementById('start-btn');
-  const stopBtn = document.getElementById('stop-btn');
-  const carlaBtn = document.getElementById('carla-btn');
-  const carlaStopBtn = document.getElementById('carla-stop-btn');
+.is-hidden {
+  display: none;
+}
 
+.carla-row {
+  display: flex;
+  gap: 8px;
+}
 
-  startBtn.addEventListener('click', async () => {
-    setStartLoading(true);
-    scheduleStartTimeout();
-    const runtimeMode = getRuntimeMode();
-    const fullscreenSelected = previewFsEl ? previewFsEl.checked : true;
-    const windowedSelected = previewWindowedEl ? previewWindowedEl.checked : false;
-    const previewFullscreen = windowedSelected ? false : fullscreenSelected;
-    const payload = {
-      start_visual: true,
-      start_localization_server: runtimeMode === 'local',
-      carla_host: document.getElementById('carla-host').value,
-      carla_port: Number(document.getElementById('carla-port').value || 2000),
-      loc_host: document.getElementById('loc-host').value,
-      loc_port: Number(document.getElementById('loc-port').value || 5555),
-      web_host: location.hostname,
-      web_port: Number(location.port || 80),
-      web_rate: Number(document.getElementById('web-rate').value || 6),
-      preview_fullscreen: previewFullscreen,
-      no_preview_window: document.getElementById('no-preview').checked
-    };
-    try {
-      await postJson('/api/start', payload);
-      await refreshStatus();
-    } catch (err) {
-      endStartLoading();
-      clearStartTimeout();
-      showToast('Start failed. Check backend logs.', 'error');
-    }
-  });
+.carla-row .btn.ghost {
+  width: auto;
+  flex: 1;
+}
 
-  stopBtn.addEventListener('click', async () => {
-    openStopModal();
-  });
+.modal {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 1400;
+}
 
-  if (carlaModalEl) {
-    carlaModalEl.addEventListener('click', (event) => {
-      const target = event.target;
-      if (target && target.dataset && target.dataset.modalClose === 'true') {
-        closeCarlaModal();
-      }
-    });
+.modal.is-open {
+  display: flex;
+}
+
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(5, 10, 16, 0.75);
+  backdrop-filter: blur(6px);
+}
+
+.modal-card {
+  position: relative;
+  width: min(520px, calc(100% - 32px));
+  background: rgba(12, 18, 26, 0.95);
+  border: 1px solid rgba(120, 140, 160, 0.35);
+  border-radius: 16px;
+  padding: 16px;
+  display: grid;
+  gap: 14px;
+  box-shadow: 0 20px 40px rgba(2, 8, 16, 0.55);
+  animation: modal-in 0.2s ease-out;
+}
+
+.modal-card--alert {
+  border-color: rgba(255, 107, 87, 0.45);
+  box-shadow: 0 20px 50px rgba(255, 107, 87, 0.12), 0 20px 40px rgba(2, 8, 16, 0.55);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.icon-btn {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.modal-body {
+  display: grid;
+  gap: 12px;
+}
+
+.modal-alert {
+  display: grid;
+  grid-template-columns: 40px 1fr;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(255, 107, 87, 0.1);
+  border: 1px solid rgba(255, 107, 87, 0.35);
+}
+
+.modal-alert-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 107, 87, 0.2);
+  color: #ffb4a9;
+  font-weight: 700;
+  font-size: 18px;
+  border: 1px solid rgba(255, 107, 87, 0.5);
+  box-shadow: 0 0 12px rgba(255, 107, 87, 0.35);
+}
+
+.modal-alert-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.modal-alert-text {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.file-path {
+  font-size: 11px;
+  color: var(--muted);
+  background: rgba(8, 12, 18, 0.6);
+  border: 1px solid rgba(110, 130, 150, 0.25);
+  border-radius: 8px;
+  padding: 6px 8px;
+  word-break: break-all;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
   }
-
-  if (runtimeLocalEl) {
-    runtimeLocalEl.addEventListener('change', () => {
-      if (runtimeLocalEl.checked) {
-        setRuntimeUi('local');
-      }
-    });
-  }
-
-  if (runtimeEdgeEl) {
-    runtimeEdgeEl.addEventListener('change', () => {
-      if (runtimeEdgeEl.checked) {
-        setRuntimeUi('edge');
-      }
-    });
-  }
-
-  if (carlaStopModalEl) {
-    carlaStopModalEl.addEventListener('click', (event) => {
-      const target = event.target;
-      if (target && target.dataset && target.dataset.modalClose === 'true') {
-        closeCarlaStopModal();
-      }
-    });
-  }
-
-  if (stopModalEl) {
-    stopModalEl.addEventListener('click', (event) => {
-      const target = event.target;
-      if (target && target.dataset && target.dataset.modalClose === 'true') {
-        closeStopModal();
-      }
-    });
-  }
-
-  if (carlaExeInput) {
-    carlaExeInput.addEventListener('change', () => {
-      const file = carlaExeInput.files && carlaExeInput.files[0];
-      if (file && carlaExeTextInput) {
-        const candidate = file.path || carlaExeInput.value || '';
-        carlaExeTextInput.value = isFakePath(candidate) ? '' : candidate;
-      }
-      updateCarlaExePathLabel();
-    });
-  }
-
-  if (carlaExeTextInput) {
-    carlaExeTextInput.addEventListener('input', updateCarlaExePathLabel);
-  }
-
-  if (carlaLaunchConfirm) {
-    carlaLaunchConfirm.addEventListener('click', async () => {
-      const exePath = getCarlaExePath();
-      if (!exePath) {
-        showToast('Paste the full CARLA path. Browser hides it in file picker.', 'error');
-        return;
-      }
-      closeCarlaModal();
-      setCarlaLoading(true);
-      const payload = {
-        carla_exe: exePath,
-        carla_args: carlaArgsInput ? carlaArgsInput.value : ''
-      };
-      const res = await postJson('/api/launch-carla', payload);
-      if (!res.ok) {
-        setStatus(`CARLA error: ${res.error || 'unknown'}`, false);
-        endCarlaLoading();
-        return;
-      }
-      await refreshStatus();
-      endCarlaLoading();
-      showToast('CARLA running', 'success');
-    });
-  }
-
-  if (carlaStopConfirm) {
-    carlaStopConfirm.addEventListener('click', async () => {
-      closeCarlaStopModal();
-      setCarlaLoading(true);
-      await postJson('/api/stop', {});
-      await refreshStatus();
-      endCarlaLoading();
-      showToast('CARLA stopped', 'info');
-    });
-  }
-
-  if (stopConfirm) {
-    stopConfirm.addEventListener('click', async () => {
-      closeStopModal();
-      await postJson('/api/stop', {});
-      await refreshStatus();
-      clearStartTimeout();
-      showToast('All services stopped', 'info');
-    });
-  }
-
-  carlaBtn.addEventListener('click', async () => {
-    openCarlaModal();
-  });
-
-  if (carlaStopBtn) {
-    carlaStopBtn.addEventListener('click', async () => {
-      openCarlaStopModal();
-    });
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
   }
 }
 
-function init() {
-  initStarfield();
-  const style = document.createElement('style');
-  style.textContent = `
-    .est-icon .est-x {
-      width: 20px;
-      height: 20px;
-      position: relative;
-    }
-    .est-icon .est-x::before,
-    .est-icon .est-x::after {
-      content: '';
-      position: absolute;
-      left: 9px;
-      top: 0;
-      width: 3px;
-      height: 20px;
-      background: #ff5d5d;
-    }
-    .est-icon .est-x::before { transform: rotate(45deg); }
-    .est-icon .est-x::after { transform: rotate(-45deg); }
-  `;
-  document.head.appendChild(style);
 
-  setRuntimeUi(getRuntimeMode());
-  bindControls();
-  refreshStatus();
-  connectWs();
+.note {
+  font-size: 15px;
+  color: var(--muted);
+  margin-top: 10px;
 }
 
-init();
+.toast-stack {
+  position: fixed;
+  top: 18px;
+  right: 18px;
+  display: grid;
+  gap: 8px;
+  z-index: 1200;
+}
 
-function initStarfield() {
-  const canvas = document.getElementById('starfield');
-  if (!canvas) {
-    return;
+.toast {
+  background: rgba(12, 18, 26, 0.92);
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  color: var(--text);
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 12px;
+  box-shadow: 0 12px 24px rgba(2, 8, 16, 0.45);
+  animation: toast-in 0.25s ease-out, toast-out 0.25s ease-in 2.2s forwards;
+}
+
+.toast.success {
+  border-color: rgba(90, 211, 122, 0.6);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
   }
-  const ctx = canvas.getContext('2d');
-  if (!ctx) {
-    return;
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
+}
 
-  let width = 0;
-  let height = 0;
-  let animationFrame = null;
-  const density = 0.00008;
-  const maxLinkDistance = 140;
-  const mouse = { x: -9999, y: -9999 };
-  let points = [];
-
-  function resize() {
-    width = canvas.clientWidth;
-    height = canvas.clientHeight;
-    canvas.width = Math.floor(width * window.devicePixelRatio);
-    canvas.height = Math.floor(height * window.devicePixelRatio);
-    ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
-    const count = Math.max(50, Math.floor(width * height * density));
-    points = Array.from({ length: count }).map(() => ({
-      x: Math.random() * width,
-      y: Math.random() * height,
-      vx: (Math.random() - 0.5) * 0.2,
-      vy: (Math.random() - 0.5) * 0.2,
-      radius: 1 + Math.random() * 1.5
-    }));
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    transform: translateY(-6px);
   }
+}
 
-  function draw() {
-    ctx.clearRect(0, 0, width, height);
-    ctx.fillStyle = 'rgba(200, 230, 255, 0.75)';
+.gt-tooltip {
+  background: rgba(10, 16, 22, 0.9);
+  border: 1px solid rgba(90, 211, 122, 0.5);
+  color: var(--text);
+  padding: 6px 8px;
+  border-radius: 8px;
+  box-shadow: 0 10px 24px rgba(2, 8, 16, 0.4);
+  font-size: 12px;
+}
 
-    for (const point of points) {
-      point.x += point.vx;
-      point.y += point.vy;
-      if (point.x < -50) point.x = width + 50;
-      if (point.x > width + 50) point.x = -50;
-      if (point.y < -50) point.y = height + 50;
-      if (point.y > height + 50) point.y = -50;
-      ctx.beginPath();
-      ctx.arc(point.x, point.y, point.radius, 0, Math.PI * 2);
-      ctx.fill();
-    }
+.pulse-ring {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 400;
+  opacity: 0;
+}
 
-    ctx.strokeStyle = 'rgba(120, 200, 255, 0.28)';
-    for (let i = 0; i < points.length; i++) {
-      const p = points[i];
-      for (let j = i + 1; j < points.length; j++) {
-        const q = points[j];
-        const dx = p.x - q.x;
-        const dy = p.y - q.y;
-        const dist = Math.hypot(dx, dy);
-        if (dist < maxLinkDistance) {
-          const alpha = 1 - dist / maxLinkDistance;
-          ctx.strokeStyle = `rgba(110, 190, 255, ${alpha * 0.35})`;
-          ctx.beginPath();
-          ctx.moveTo(p.x, p.y);
-          ctx.lineTo(q.x, q.y);
-          ctx.stroke();
-        }
-      }
-    }
+.pulse-ring.active::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  border: 2px solid rgba(56, 189, 248, 0.7);
+  transform: translate(-50%, -50%);
+  animation: pulse-ring 0.9s ease-out;
+}
 
-    if (mouse.x > -1) {
-      for (const p of points) {
-        const dx = p.x - mouse.x;
-        const dy = p.y - mouse.y;
-        const dist = Math.hypot(dx, dy);
-        if (dist < maxLinkDistance) {
-          const alpha = 1 - dist / maxLinkDistance;
-          ctx.strokeStyle = `rgba(90, 211, 122, ${alpha * 0.5})`;
-          ctx.beginPath();
-          ctx.moveTo(p.x, p.y);
-          ctx.lineTo(mouse.x, mouse.y);
-          ctx.stroke();
-        }
-      }
-    }
-
-    animationFrame = requestAnimationFrame(draw);
+@keyframes pulse-ring {
+  from {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(0.6);
   }
+  to {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.8);
+  }
+}
 
-  function onMouseMove(event) {
-    const rect = canvas.getBoundingClientRect();
-    mouse.x = event.clientX - rect.left;
-    mouse.y = event.clientY - rect.top;
+@media (max-width: 980px) {
+  .layout {
+    padding: 12px;
   }
 
-  function onMouseLeave() {
-    mouse.x = -9999;
-    mouse.y = -9999;
+  .main {
+    grid-template-columns: 1fr;
   }
 
-  function cleanup() {
-    if (animationFrame) {
-      cancelAnimationFrame(animationFrame);
-    }
-    window.removeEventListener('resize', resize);
-    window.removeEventListener('mousemove', onMouseMove);
-    window.removeEventListener('mouseleave', onMouseLeave);
+  .map {
+    min-height: 520px;
   }
 
-  resize();
-  draw();
-  window.addEventListener('resize', resize);
-  window.addEventListener('mousemove', onMouseMove);
-  window.addEventListener('mouseleave', onMouseLeave);
-  window.addEventListener('beforeunload', cleanup);
+  .choice-row {
+    grid-template-columns: 1fr;
+  }
+}
+/* Ekranın ortasına fırlayacak dev yazı efekti */
+.giant-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(0.1);
+  opacity: 0;
+  pointer-events: none; /* Haritaya tıklamayı engellememesi için */
+  z-index: 1000;
+  font-size: 42px;
+  font-weight: 700;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  text-align: center;
+  white-space: nowrap;
+  background: rgba(10, 15, 22, 0.6);
+  padding: 16px 32px;
+  border: 2px solid var(--accent);
+  border-radius: 12px;
+  backdrop-filter: blur(8px);
+  box-shadow: 
+    0 0 30px rgba(56, 189, 248, 0.4),
+    inset 0 0 20px rgba(56, 189, 248, 0.4);
+}
+
+.giant-overlay.pop {
+  animation: overlay-pop 1.2s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+}
+
+@keyframes overlay-pop {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.5); }
+  15% { opacity: 1; transform: translate(-50%, -50%) scale(1.1); }
+  25% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  80% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1.3); filter: blur(4px); }
+}
+
+/* Harita panelinin dış çerçevesinin flaş gibi patlaması */
+.map-panel.flash-border {
+  animation: border-flash 0.8s ease-out;
+}
+
+@keyframes border-flash {
+  0% { box-shadow: inset 0 0 0 4px var(--accent), 0 0 60px rgba(56, 189, 248, 0.6); }
+  100% { box-shadow: inset 0 0 0 0 var(--accent), var(--shadow); }
 }

@@ -37,6 +37,7 @@ class ProcessState:
         self.visual_localization: Optional[subprocess.Popen] = None
         self.localization_server: Optional[subprocess.Popen] = None
         self.carla_sim: Optional[subprocess.Popen] = None
+        self.extra_scripts: List[subprocess.Popen] = []
 
 
 state = ProcessState()
@@ -129,6 +130,42 @@ def terminate_process(proc: Optional[subprocess.Popen]) -> None:
         proc.kill()
 
 
+def terminate_process_list(processes: List[subprocess.Popen]) -> None:
+    for proc in list(processes):
+        terminate_process(proc)
+    processes.clear()
+
+
+def terminate_stale_script_process(script_path: Path) -> None:
+    if os.name == 'nt':
+        return
+    target = str(script_path)
+    try:
+        output = subprocess.check_output(
+            ['ps', '-eo', 'pid=,args='],
+            universal_newlines=True,
+        )
+    except Exception:
+        return
+
+    for line in output.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        pid_text, _, command = line.partition(' ')
+        try:
+            pid = int(pid_text)
+        except ValueError:
+            continue
+        if pid == os.getpid() or target not in command:
+            continue
+        logger.info('Stopping stale script process: %s', command)
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+
+
 def launch_carla_sim(exe_path: str, args: List[str]) -> subprocess.Popen:
     if not exe_path:
         raise ValueError('CARLA executable path is required.')
@@ -213,17 +250,45 @@ async def wait_for_tcp_service(host: str, port: int, timeout_s: float = 30.0) ->
     return False
 
 
+async def wait_for_carla_process(
+    proc: subprocess.Popen,
+    host: str = '127.0.0.1',
+    port: int = 2000,
+    timeout_s: float = 45.0,
+) -> Optional[str]:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            return f'CARLA exited early with code {proc.returncode}. Check the CARLA log above.'
+        if is_tcp_port_open(host, port):
+            return None
+        await asyncio.sleep(0.5)
+    return f'CARLA RPC did not become available at {host}:{port} within {int(timeout_s)} seconds.'
+
+
 @app.post('/api/start')
 async def start_processes(payload: Dict[str, Any]) -> JSONResponse:
     start_visual = bool(payload.get('start_visual', True))
 
     if start_visual:
+        carla_host = str(payload.get('carla_host', '127.0.0.1'))
+        carla_port = int(payload.get('carla_port', 2000))
+        carla_ready = await wait_for_tcp_service(carla_host, carla_port, timeout_s=5.0)
+        if not carla_ready:
+            logger.error('CARLA RPC is not available at %s:%s', carla_host, carla_port)
+            return JSONResponse({
+                'ok': False,
+                'error': 'CARLA RPC is not available. Start CARLA successfully before starting visual localization.',
+            })
+
+        logger.info('CARLA RPC is available at %s:%s', carla_host, carla_port)
+
         if state.visual_localization is not None and state.visual_localization.poll() is None:
             terminate_process(state.visual_localization)
             state.visual_localization = None
         args = [
-            '--host', str(payload.get('carla_host', '127.0.0.1')),
-            '--port', str(payload.get('carla_port', 2000)),
+            '--host', carla_host,
+            '--port', str(carla_port),
             '--loc-host', str(payload.get('loc_host', '127.0.0.1')),
             '--loc-port', str(payload.get('loc_port', 5555)),
             '--web-enabled',
@@ -249,18 +314,9 @@ async def start_processes(payload: Dict[str, Any]) -> JSONResponse:
         )
         start_process_logger(state.visual_localization, 'visual_localization')
 
-        carla_host = str(payload.get('carla_host', '127.0.0.1'))
-        carla_port = int(payload.get('carla_port', 2000))
-        carla_ready = await wait_for_tcp_service(carla_host, carla_port)
-        if not carla_ready:
-            logger.error('CARLA RPC is not available at %s:%s', carla_host, carla_port)
-            return JSONResponse({'ok': False, 'error': 'CARLA RPC is not available yet.'})
-
-        logger.info('CARLA RPC is available at %s:%s', carla_host, carla_port)
-
+        terminate_stale_script_process(ROOT_DIR / 'carla_examples' / 'generate_traffic.py')
+        terminate_process_list(state.extra_scripts)
         extra_scripts = [
-            # Traffic generation is disabled while running visual_localization.py.
-            # (ROOT_DIR / 'carla_examples' / 'generate_traffic.py', ['--tm-port', '9000']),
             (ROOT_DIR / 'carla_examples' / 'add_buildings_to_map.py', ['--no-debug-boxes']),
         ]
         for script_path, script_args in extra_scripts:
@@ -273,6 +329,7 @@ async def start_processes(payload: Dict[str, Any]) -> JSONResponse:
                 universal_newlines=True,
                 bufsize=1,
             )
+            state.extra_scripts.append(proc)
             start_process_logger(proc, Path(script_path).name)
 
 
@@ -292,11 +349,18 @@ async def launch_carla(payload: Dict[str, Any]) -> JSONResponse:
     exe_path = str(payload.get('carla_exe', '')).strip()
     exe_path = normalize_windows_path_for_wsl(exe_path)
     args_raw = str(payload.get('carla_args', '')).strip()
-    args = shlex.split(args_raw)
+    args = shlex.split(args_raw) if args_raw else ['-quality-level=Low']
+    terminate_stale_script_process(ROOT_DIR / 'carla_examples' / 'generate_traffic.py')
     try:
         state.carla_sim = launch_carla_sim(exe_path, args)
     except Exception as exc:
         return JSONResponse({'ok': False, 'error': str(exc)})
+
+    launch_error = await wait_for_carla_process(state.carla_sim)
+    if launch_error is not None:
+        terminate_process(state.carla_sim)
+        state.carla_sim = None
+        return JSONResponse({'ok': False, 'error': launch_error})
 
     return JSONResponse({'ok': True})
 
@@ -306,6 +370,8 @@ async def stop_processes() -> JSONResponse:
     terminate_process(state.visual_localization)
     terminate_process(state.localization_server)
     terminate_process(state.carla_sim)
+    terminate_process_list(state.extra_scripts)
+    terminate_stale_script_process(ROOT_DIR / 'carla_examples' / 'generate_traffic.py')
     state.visual_localization = None
     state.localization_server = None
     state.carla_sim = None

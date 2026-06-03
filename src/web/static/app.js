@@ -6,13 +6,29 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '&copy; OpenStreetMap contributors'
 }).addTo(map);
 
-const gtMarker = L.circleMarker([0, 0], {
+const liveMarker = L.circleMarker([0, 0], {
   radius: 7,
   color: '#5ad37a',
   fillColor: '#5ad37a',
   fillOpacity: 0.9
 }).addTo(map);
-gtMarker.bindTooltip('Lat: --\nLon: --', {
+liveMarker.bindTooltip('Live Lat: --\nLive Lon: --', {
+  direction: 'top',
+  offset: [0, -8],
+  opacity: 0.95,
+  className: 'gt-tooltip'
+});
+
+const localizationGtMarker = L.marker([0, 0], {
+  opacity: 0,
+  icon: L.divIcon({
+    className: 'loc-gt-icon',
+    html: '<div class="loc-gt-square"></div>',
+    iconSize: [18, 18],
+    iconAnchor: [9, 9]
+  })
+}).addTo(map);
+localizationGtMarker.bindTooltip('GT Lat: --\nGT Lon: --', {
   direction: 'top',
   offset: [0, -8],
   opacity: 0.95,
@@ -20,17 +36,19 @@ gtMarker.bindTooltip('Lat: --\nLon: --', {
 });
 
 const estMarker = L.marker([0, 0], {
+  opacity: 0,
   icon: L.divIcon({
     className: 'est-icon',
     html: '<div class="est-x"></div>',
-    iconSize: [14, 14]
+    iconSize: [22, 22],
+    iconAnchor: [11, 11]
   })
 }).addTo(map);
 
 const estHistoryLayer = L.layerGroup().addTo(map);
 const estHistory = [];
 
-const gtTrail = L.polyline([], { color: '#5ad37a', weight: 2, opacity: 0.6 }).addTo(map);
+const liveTrail = L.polyline([], { color: '#5ad37a', weight: 2, opacity: 0.6 }).addTo(map);
 
 const infoEst = document.getElementById('info-est');
 const infoGt = document.getElementById('info-gt');
@@ -61,7 +79,7 @@ const previewFsEl = document.getElementById('preview-fs');
 const previewWindowedEl = document.getElementById('preview-windowed');
 const carlaRpcEl = document.getElementById('carla-rpc');
 
-let lastGt = null;
+let lastLive = null;
 let mapInitialized = false;
 let startTimeoutId = null;
 let startLoadingAt = null;
@@ -104,22 +122,26 @@ function setRuntimeUi(mode) {
   }
 }
 
-function updateGt(lat, lon) {
-  lastGt = [lat, lon];
-  gtMarker.setLatLng([lat, lon]);
-  gtMarker.setTooltipContent(`Lat: ${lat.toFixed(6)}<br>Lon: ${lon.toFixed(6)}`);
-  gtTrail.addLatLng([lat, lon]);
+function updateLiveLocation(lat, lon) {
+  lastLive = [lat, lon];
+  liveMarker.setLatLng([lat, lon]);
+  liveMarker.setTooltipContent(`Live Lat: ${lat.toFixed(6)}<br>Live Lon: ${lon.toFixed(6)}`);
+  liveTrail.addLatLng([lat, lon]);
   if (!mapInitialized) {
     map.setView([lat, lon], 17);
     mapInitialized = true;
-  } else {
-    // Keep GT at the center even if the user drags the map.
-    map.setView([lat, lon], map.getZoom(), { animate: true });
   }
 }
 
 function updateEst(lat, lon) {
+  estMarker.setOpacity(1);
   estMarker.setLatLng([lat, lon]);
+}
+
+function updateLocalizationGt(lat, lon) {
+  localizationGtMarker.setOpacity(1);
+  localizationGtMarker.setLatLng([lat, lon]);
+  localizationGtMarker.setTooltipContent(`GT Lat: ${lat.toFixed(6)}<br>GT Lon: ${lon.toFixed(6)}`);
 }
 
 function addEstimateHistory(lat, lon) {
@@ -127,7 +149,8 @@ function addEstimateHistory(lat, lon) {
     icon: L.divIcon({
       className: 'est-icon',
       html: '<div class="est-x"></div>',
-      iconSize: [12, 12]
+      iconSize: [18, 18],
+      iconAnchor: [9, 9]
     })
   });
   marker.addTo(estHistoryLayer);
@@ -499,11 +522,11 @@ function connectWs() {
     try {
       const payload = JSON.parse(evt.data);
       if (payload.type === 'gt') {
-        updateGt(payload.lat, payload.lon);
+        updateLiveLocation(payload.lat, payload.lon);
       }
       if (payload.type === 'localization') {
-        updateGt(payload.gt_lat, payload.gt_lon);
         updateEst(payload.est_lat, payload.est_lon);
+        updateLocalizationGt(payload.gt_lat, payload.gt_lon);
         addEstimateHistory(payload.est_lat, payload.est_lon);
         updateLocalizationInfo(payload);
         showToast('Localization complete', 'success');
@@ -553,12 +576,15 @@ function bindControls() {
       no_preview_window: document.getElementById('no-preview').checked
     };
     try {
-      await postJson('/api/start', payload);
+      const res = await postJson('/api/start', payload);
+      if (!res.ok) {
+        throw new Error(res.error || 'Start failed.');
+      }
       await refreshStatus();
     } catch (err) {
       endStartLoading();
       clearStartTimeout();
-      showToast('Start failed. Check backend logs.', 'error');
+      showToast(err.message || 'Start failed. Check backend logs.', 'error');
     }
   });
 
@@ -641,6 +667,7 @@ function bindControls() {
       if (!res.ok) {
         setStatus(`CARLA error: ${res.error || 'unknown'}`, false);
         endCarlaLoading();
+        showToast(res.error || 'CARLA launch failed.', 'error');
         return;
       }
       await refreshStatus();
@@ -685,19 +712,27 @@ function init() {
   initStarfield();
   const style = document.createElement('style');
   style.textContent = `
+    .loc-gt-icon .loc-gt-square {
+      width: 16px;
+      height: 16px;
+      box-sizing: border-box;
+      background: #f6d84d;
+      border: 2px solid #7a6500;
+      box-shadow: 0 0 0 2px rgba(246, 216, 77, 0.22);
+    }
     .est-icon .est-x {
-      width: 14px;
-      height: 14px;
+      width: 20px;
+      height: 20px;
       position: relative;
     }
     .est-icon .est-x::before,
     .est-icon .est-x::after {
       content: '';
       position: absolute;
-      left: 6px;
+      left: 9px;
       top: 0;
-      width: 2px;
-      height: 14px;
+      width: 3px;
+      height: 20px;
       background: #ff5d5d;
     }
     .est-icon .est-x::before { transform: rotate(45deg); }

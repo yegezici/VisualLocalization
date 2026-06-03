@@ -259,7 +259,8 @@ async def start_processes(payload: Dict[str, Any]) -> JSONResponse:
         logger.info('CARLA RPC is available at %s:%s', carla_host, carla_port)
 
         extra_scripts = [
-            (ROOT_DIR / 'carla_examples' / 'generate_traffic.py', ['--tm-port', '9000']),
+            # Traffic generation is disabled while running visual_localization.py.
+            # (ROOT_DIR / 'carla_examples' / 'generate_traffic.py', ['--tm-port', '9000']),
             (ROOT_DIR / 'carla_examples' / 'add_buildings_to_map.py', ['--no-debug-boxes']),
         ]
         for script_path, script_args in extra_scripts:
